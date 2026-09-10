@@ -14,12 +14,17 @@ button, canvas { -webkit-tap-highlight-color: transparent; }
 .webgl-recovery button { justify-self: center; border: 0; border-radius: 999px; padding: .75rem 1.1rem; background: #202324; color: white; font: inherit; font-weight: 700; cursor: pointer; }
 .game-start { position: absolute; inset: 0; display: grid; place-items: center; opacity: 1; transition: opacity .45s ease; pointer-events: none; }
 .game-start--hidden { opacity: 0; }
-.game-start button { pointer-events: auto; min-width: 8.5rem; border: 1px solid rgba(255,255,255,.55); border-radius: 999px; padding: 1rem 1.65rem; background: rgba(22,25,26,.9); color: white; font: inherit; font-size: 1rem; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; box-shadow: 0 1rem 3rem rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.18); backdrop-filter: blur(10px); cursor: pointer; transition: transform .2s ease, background .2s ease; }
+.game-start button { pointer-events: auto; min-width: clamp(7.4rem, 20vw, 9rem); border: 1px solid rgba(255,255,255,.55); border-radius: 999px; padding: clamp(.82rem, 2.2vw, 1rem) clamp(1.3rem, 4vw, 1.75rem); background: rgba(22,25,26,.9); color: white; font: inherit; font-size: clamp(.86rem, 2.4vw, 1rem); font-weight: 800; letter-spacing: .18em; text-transform: uppercase; box-shadow: 0 1rem 3rem rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.18); backdrop-filter: blur(10px); cursor: pointer; transition: transform .2s ease, background .2s ease; }
 .game-start button:hover { transform: translateY(-2px) scale(1.03); background: #ff4128; }
 .game-start button:focus-visible { outline: 3px solid rgba(255,65,40,.4); outline-offset: 4px; }
 .game-start--hidden button { pointer-events: none; }
 .play-hint { position: absolute; right: clamp(1rem,3vw,2.25rem); bottom: clamp(1rem,3vw,2rem); margin: 0; color: rgba(23,26,27,.68); font-size: .8rem; font-weight: 650; letter-spacing: .04em; opacity: 0; transform: translateY(.4rem); transition: opacity .45s ease, transform .45s ease; pointer-events: none; }
 .play-hint--visible { opacity: 1; transform: translateY(0); }
+.piece-tools { position: absolute; left: 50%; bottom: clamp(3.4rem,7vw,4.8rem); display: flex; align-items: center; gap: .75rem; padding: .55rem .6rem .55rem .9rem; border: 1px solid rgba(255,255,255,.45); border-radius: 999px; background: rgba(27,30,31,.88); color: white; box-shadow: 0 .8rem 2.5rem rgba(0,0,0,.2); backdrop-filter: blur(10px); opacity: 0; transform: translate(-50%, .5rem); transition: opacity .25s ease, transform .25s ease; pointer-events: none; }
+.piece-tools--visible { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.piece-tools span { font-size: .75rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.piece-tools button { border: 0; border-radius: 999px; padding: .55rem .8rem; background: #ff4128; color: white; font: inherit; font-size: .8rem; font-weight: 750; cursor: pointer; }
+.piece-tools button:focus-visible { outline: 3px solid rgba(255,65,40,.4); outline-offset: 3px; }
 .scene-loading { background: radial-gradient(circle at 50% 47%, rgba(255,255,255,.95), transparent 28%), #e6dfd2; }
 .game-mark { position: absolute; top: clamp(1rem,3vw,2rem); left: clamp(1rem,3vw,2.25rem); display: flex; align-items: center; gap: .65rem; color: #1b1d1e; font-size: .82rem; font-weight: 750; letter-spacing: .16em; text-transform: uppercase; pointer-events: none; }
 .game-mark__dot { width: .8rem; height: .8rem; border-radius: 999px; background: #ff3c24; box-shadow: 0 0 0 .28rem rgba(255,60,36,.15); }
