@@ -5,6 +5,7 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber"
 import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { LEVELS, type FixedPiece, type LevelConfig, type PieceId } from "@/data/levels";
 
 type Point3 = readonly [number, number, number];
 type Cell = readonly [number, number];
@@ -18,7 +19,7 @@ type CaptureTarget = {
 };
 
 type PieceDefinition = {
-  id: string;
+  id: PieceId;
   color: string;
   cells: readonly Cell[];
   solvedAnchor: GridCell;
@@ -43,6 +44,12 @@ const MENU_FOCUS = new THREE.Vector3(0, 0.08, 0);
 const PLAY_FOCUS = new THREE.Vector3(0, 0.08, 6.8);
 const CLOSED_LID_ANGLE = Math.PI;
 const OPEN_LID_ANGLE = 0;
+
+const STORAGE_SLOTS: readonly Point3[] = [
+  [-7.2, REST_Y, 5], [-2.6, REST_Y, 5], [2.6, REST_Y, 5], [7.1, REST_Y, 5],
+  [-7.2, REST_Y, 9], [-2.6, REST_Y, 9], [2.6, REST_Y, 9], [7.1, REST_Y, 9],
+  [-7.2, REST_Y, 13], [-2.6, REST_Y, 13], [2.6, REST_Y, 13], [7.1, REST_Y, 13],
+];
 
 const PIECES: readonly PieceDefinition[] = [
   { id: "A", color: "#e9232e", cells: [[0, 0], [1, 0], [2, 0], [3, 0], [3, 1]], solvedAnchor: { column: 3, row: 4 }, solvedRotation: 2, trayPosition: [-7.2, REST_Y, 5], trayRotation: 0 },
@@ -74,12 +81,21 @@ function rotateCell([x, z]: Cell, steps: number): Cell {
   return [nextX, nextZ];
 }
 
+function transformedCells(cells: readonly Cell[], rotation: number, flipped = false): Cell[] {
+  return cells.map((cell) => rotateCell([flipped ? -cell[0] : cell[0], cell[1]], rotation));
+}
+
 function cellsForPlacement(anchor: GridCell, cells: readonly Cell[], rotation: number, flipped = false): GridCell[] {
-  return cells.map((cell) => {
-    const mirrored: Cell = [flipped ? -cell[0] : cell[0], cell[1]];
-    const [x, z] = rotateCell(mirrored, rotation);
+  return transformedCells(cells, rotation, flipped).map(([x, z]) => {
     return { column: anchor.column + x, row: anchor.row + z };
   });
+}
+
+function fixedAnchorFor(definition: PieceDefinition, fixedPiece: FixedPiece): GridCell {
+  const transformed = transformedCells(definition.cells, fixedPiece.rotation, fixedPiece.flipped);
+  const minX = Math.min(...transformed.map(([x]) => x));
+  const minZ = Math.min(...transformed.map(([, z]) => z));
+  return { column: fixedPiece.position[0] - minX, row: fixedPiece.position[1] - minZ };
 }
 
 function worldToAnchor(x: number, z: number): GridCell {
@@ -112,6 +128,7 @@ function storageBoundsFor([x, , z]: Point3) {
 function clampPieceToStorageSlot(
   group: THREE.Group,
   definition: PieceDefinition,
+  storagePosition: Point3,
   flipped: boolean,
   viewport: { minX: number; maxX: number; minZ: number; maxZ: number },
 ) {
@@ -126,7 +143,7 @@ function clampPieceToStorageSlot(
       maxZ: Math.max(result.maxZ, world.z + sphereRadius),
     };
   }, { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
-  const storageSlot = storageBoundsFor(definition.trayPosition);
+  const storageSlot = storageBoundsFor(storagePosition);
   const slot = {
     minX: Math.max(storageSlot.minX, viewport.minX),
     maxX: Math.min(storageSlot.maxX, viewport.maxX),
@@ -153,10 +170,15 @@ function PlasticMaterial({ color }: { color: string }) {
 function Polyomino({
   definition,
   gameState,
-  startedAt,
   selected,
   rotationRequest,
   flipRequest,
+  storagePosition,
+  fixedPiece,
+  resetToken,
+  levelTransitioning,
+  unboxOrder,
+  availablePieceCount,
   onSelect,
   canPlace,
   placePiece,
@@ -164,10 +186,15 @@ function Polyomino({
 }: {
   definition: PieceDefinition;
   gameState: GameState;
-  startedAt: number;
   selected: boolean;
   rotationRequest: number;
   flipRequest: number;
+  storagePosition: Point3;
+  fixedPiece: FixedPiece | null;
+  resetToken: number;
+  levelTransitioning: boolean;
+  unboxOrder: number;
+  availablePieceCount: number;
   onSelect: (id: string) => void;
   canPlace: (id: string, cells: GridCell[]) => boolean;
   placePiece: (id: string, cells: GridCell[]) => boolean;
@@ -186,10 +213,15 @@ function Polyomino({
   const lastStationaryClick = useRef(0);
   const handledRotationRequest = useRef(rotationRequest);
   const handledFlipRequest = useRef(flipRequest);
-  const dragTarget = useRef(new THREE.Vector3(...definition.trayPosition));
+  const dragTarget = useRef(new THREE.Vector3(...storagePosition));
   const motionTarget = useRef<THREE.Vector3 | null>(null);
   const solved = useMemo(() => anchorToWorld(definition.solvedAnchor), [definition.solvedAnchor]);
-  const tray = useMemo(() => new THREE.Vector3(...definition.trayPosition), [definition.trayPosition]);
+  const tray = useMemo(() => new THREE.Vector3(...storagePosition), [storagePosition]);
+  const targetTransform = useMemo(() => {
+    if (!fixedPiece) return { position: tray, rotation: definition.trayRotation, flipped: false, anchor: null };
+    const targetAnchor = fixedAnchorFor(definition, fixedPiece);
+    return { position: anchorToWorld(targetAnchor), rotation: fixedPiece.rotation, flipped: fixedPiece.flipped, anchor: targetAnchor };
+  }, [definition, fixedPiece, tray]);
   const { camera, invalidate, size } = useThree();
 
   const currentCells = useCallback((targetAnchor: GridCell, targetRotation = rotation.current, targetFlipped = flipped.current) => (
@@ -225,7 +257,7 @@ function Polyomino({
   }, [definition.trayRotation, invalidate, tray]);
 
   useEffect(() => {
-    if (!selected || gameState !== "PLAYING") {
+    if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
       handledRotationRequest.current = rotationRequest;
       return;
     }
@@ -249,7 +281,7 @@ function Polyomino({
       group.position.add(pivotCorrection);
 
       const isStored = !placed.current && !dragging.current;
-      if (isStored && !clampPieceToStorageSlot(group, definition, flipped.current, visibleStorageBounds())) return false;
+      if (isStored && !clampPieceToStorageSlot(group, definition, storagePosition, flipped.current, visibleStorageBounds())) return false;
 
       let nextAnchor: GridCell | null = null;
       if (placed.current || (dragging.current && snapAnchor.current)) {
@@ -280,10 +312,10 @@ function Polyomino({
         .to(group.rotation, { z: 0, duration: 0.04, ease: "power1.in" });
     }
     invalidate();
-  }, [canPlace, currentCells, definition, gameState, invalidate, placePiece, rotationRequest, selected, visibleStorageBounds]);
+  }, [canPlace, currentCells, definition, fixedPiece, gameState, invalidate, levelTransitioning, placePiece, rotationRequest, selected, storagePosition, visibleStorageBounds]);
 
   useEffect(() => {
-    if (!selected || gameState !== "PLAYING") {
+    if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
       handledFlipRequest.current = flipRequest;
       return;
     }
@@ -305,7 +337,7 @@ function Polyomino({
     group.position.add(worldPivot.sub(group.localToWorld(nextLocalPivot)));
 
     const isStored = !placed.current && !dragging.current;
-    let valid = !isStored || clampPieceToStorageSlot(group, definition, nextFlipped, visibleStorageBounds());
+    let valid = !isStored || clampPieceToStorageSlot(group, definition, storagePosition, nextFlipped, visibleStorageBounds());
     let nextAnchor: GridCell | null = null;
     if (valid && (placed.current || (dragging.current && snapAnchor.current))) {
       nextAnchor = worldToAnchor(group.position.x, group.position.z);
@@ -334,7 +366,79 @@ function Polyomino({
     flipped.current = nextFlipped;
     motionTarget.current = null;
     invalidate();
-  }, [canPlace, currentCells, definition, flipRequest, gameState, invalidate, placePiece, selected, visibleStorageBounds]);
+  }, [canPlace, currentCells, definition, fixedPiece, flipRequest, gameState, invalidate, levelTransitioning, placePiece, selected, storagePosition, visibleStorageBounds]);
+
+  useEffect(() => {
+    if (gameState !== "ANIMATING") return;
+    const group = groupRef.current;
+    const body = bodyRef.current;
+    if (!group || !body) return;
+
+    gsap.killTweensOf([group.position, group.rotation, body.scale]);
+
+    const timeline = gsap.timeline({ paused: true, onUpdate: invalidate });
+    timeline.set(group.position, { x: solved.x, y: solved.y, z: solved.z }, 0);
+    timeline.set(group.rotation, { x: 0, y: definition.solvedRotation * (Math.PI / 2), z: 0 }, 0);
+    timeline.set(body.scale, { x: 1, y: 1, z: 1 }, 0);
+    timeline.set(group.scale, { x: 1, y: 1, z: 1 }, 0);
+
+    if (fixedPiece) {
+      const reconfigureStart = 0.82 + availablePieceCount * 0.25;
+      timeline.to(group.scale, { x: 0.06, y: 0.06, z: 0.06, duration: 0.12, ease: "power2.in" }, reconfigureStart);
+      timeline.to(group.position, { x: targetTransform.position.x, y: targetTransform.position.y + 0.55, z: targetTransform.position.z, duration: 0.18, ease: "power2.inOut" }, reconfigureStart + 0.12);
+      timeline.to(group.rotation, { y: targetTransform.rotation * (Math.PI / 2), duration: 0.18, ease: "power2.inOut" }, reconfigureStart + 0.12);
+      timeline.to(body.scale, { x: targetTransform.flipped ? -1 : 1, duration: 0.18, ease: "power2.inOut" }, reconfigureStart + 0.12);
+      timeline.to(group.position, { y: targetTransform.position.y, duration: 0.18, ease: "power2.out" }, reconfigureStart + 0.3);
+      timeline.to(group.scale, { x: 1, y: 1, z: 1, duration: 0.18, ease: "power2.out" }, reconfigureStart + 0.3);
+    } else {
+      const laneY = 1.55;
+      const glideStart = 0.7 + unboxOrder * 0.25;
+      timeline.to(group.position, { y: laneY, duration: 0.18, ease: "power2.inOut" }, glideStart - 0.18);
+      timeline.to(group.position, { x: targetTransform.position.x, z: targetTransform.position.z, duration: 0.2, ease: "power2.inOut" }, glideStart);
+      timeline.to(group.rotation, { y: targetTransform.rotation * (Math.PI / 2), duration: 0.2, ease: "power2.inOut" }, glideStart);
+      timeline.to(body.scale, { x: targetTransform.flipped ? -1 : 1, duration: 0.2, ease: "power2.inOut" }, glideStart);
+      timeline.to(group.position, { y: targetTransform.position.y, duration: 0.12, ease: "power2.out" }, glideStart + 0.2);
+    }
+    timeline.play(0);
+    return () => { timeline.kill(); };
+  }, [availablePieceCount, definition.solvedRotation, fixedPiece, gameState, invalidate, solved, targetTransform, unboxOrder]);
+
+  useEffect(() => {
+    if (gameState !== "PLAYING") return;
+    const group = groupRef.current;
+    const body = bodyRef.current;
+    if (!group || !body) return;
+    gsap.killTweensOf([group.position, group.rotation, body.scale]);
+    dragging.current = false;
+    snapAnchor.current = null;
+    motionTarget.current = null;
+    placed.current = Boolean(fixedPiece);
+    anchor.current = targetTransform.anchor;
+    rotation.current = targetTransform.rotation;
+    flipped.current = targetTransform.flipped;
+
+    const applyExactTarget = () => {
+      group.position.copy(targetTransform.position);
+      group.rotation.set(0, targetTransform.rotation * (Math.PI / 2), 0);
+      group.scale.set(1, 1, 1);
+      body.scale.x = targetTransform.flipped ? -1 : 1;
+      invalidate();
+    };
+
+    if (!levelTransitioning) {
+      applyExactTarget();
+      return;
+    }
+
+    const raisedY = targetTransform.position.y + 0.5;
+    const timeline = gsap.timeline({ onUpdate: invalidate, onComplete: applyExactTarget });
+    timeline.to(group.position, { y: group.position.y + 0.5, duration: 0.25, ease: "power2.inOut" }, 0);
+    timeline.to(group.position, { x: targetTransform.position.x, z: targetTransform.position.z, y: raisedY, duration: 0.4, ease: "power2.inOut" }, 0.2);
+    timeline.to(group.rotation, { x: 0, y: targetTransform.rotation * (Math.PI / 2), z: 0, duration: 0.4, ease: "power2.inOut" }, 0.2);
+    timeline.to(body.scale, { x: targetTransform.flipped ? -1 : 1, duration: 0.4, ease: "power2.inOut" }, 0.2);
+    timeline.to(group.position, { y: targetTransform.position.y, duration: 0.2, ease: "power2.out" }, 0.55);
+    return () => { timeline.kill(); };
+  }, [fixedPiece, gameState, invalidate, levelTransitioning, resetToken, targetTransform]);
 
   useFrame(() => {
     const group = groupRef.current;
@@ -346,29 +450,7 @@ function Polyomino({
       return;
     }
 
-    if (gameState === "ANIMATING") {
-      const elapsed = (performance.now() - startedAt) / 1000;
-      const pieceIndex = PIECES.findIndex((piece) => piece.id === definition.id);
-      const delay = 0.85 + pieceIndex * 0.16;
-      const progress = smoothstep((elapsed - delay) / 1.35);
-      const midpoint = solved.clone().lerp(tray, 0.5);
-      const pathDirection = tray.clone().sub(solved);
-      const perpendicular = new THREE.Vector3(-pathDirection.z, 0, pathDirection.x).normalize();
-      midpoint.addScaledVector(perpendicular, (pieceIndex % 2 === 0 ? 1 : -1) * (0.65 + (pieceIndex % 3) * 0.18));
-      const inverse = 1 - progress;
-      group.position.set(
-        inverse * inverse * solved.x + 2 * inverse * progress * midpoint.x + progress * progress * tray.x,
-        THREE.MathUtils.lerp(solved.y, tray.y, progress) + Math.sin(Math.PI * progress) * (1.15 + (pieceIndex % 3) * 0.12),
-        inverse * inverse * solved.z + 2 * inverse * progress * midpoint.z + progress * progress * tray.z,
-      );
-      group.rotation.y = THREE.MathUtils.lerp(
-        definition.solvedRotation * (Math.PI / 2),
-        definition.trayRotation * (Math.PI / 2),
-        progress,
-      );
-      invalidate();
-      return;
-    }
+    if (gameState === "ANIMATING") return;
 
     if (dragging.current) {
       group.position.lerp(dragTarget.current, snapAnchor.current ? 0.34 : 0.48);
@@ -393,7 +475,7 @@ function Polyomino({
   };
 
   const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
-    if (gameState !== "PLAYING" || !groupRef.current) return;
+    if (gameState !== "PLAYING" || levelTransitioning || fixedPiece || !groupRef.current) return;
     event.stopPropagation();
     event.nativeEvent.preventDefault();
     const pointerTarget = event.nativeEvent.target as Element;
@@ -471,6 +553,7 @@ function Polyomino({
       name={`piece-${definition.id}`}
       position={solved.toArray() as [number, number, number]}
       rotation={[0, definition.solvedRotation * (Math.PI / 2), 0]}
+      raycast={fixedPiece || levelTransitioning ? () => null : undefined}
       onPointerDown={handlePointerDown}
       onPointerOver={(event) => {
         cursorCellIndex.current = Number(event.object.userData.cellIndex ?? cursorCellIndex.current);
@@ -530,7 +613,8 @@ function SocketLattice() {
   );
 }
 
-function ClamshellCase({ gameState }: { gameState: GameState }) {
+function ClamshellCase({ gameState, won }: { gameState: GameState; won: boolean }) {
+  const caseRef = useRef<THREE.Group>(null);
   const lidRef = useRef<THREE.Group>(null);
   const lidMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
   const lidShadowMaterialRef = useRef<THREE.MeshDepthMaterial>(null);
@@ -562,8 +646,17 @@ function ClamshellCase({ gameState }: { gameState: GameState }) {
     return () => { timeline.kill(); };
   }, [gameState, invalidate]);
 
+  useEffect(() => {
+    const puzzleCase = caseRef.current;
+    if (!won || !puzzleCase) return;
+    const pulse = gsap.timeline({ onUpdate: invalidate })
+      .to(puzzleCase.scale, { x: 1.025, y: 1.025, z: 1.025, duration: 0.2, ease: "power2.out", yoyo: true, repeat: 5 })
+      .to(puzzleCase.scale, { x: 1, y: 1, z: 1, duration: 0.12 });
+    return () => { pulse.kill(); };
+  }, [invalidate, won]);
+
   return (
-    <group>
+    <group ref={caseRef}>
       <RoundedBox args={[10.15, 0.28, 5.5]} radius={0.2} smoothness={6} position={[0, -0.12, 0]} castShadow receiveShadow>
         <meshStandardMaterial color="#202324" roughness={0.32} metalness={0.08} />
       </RoundedBox>
@@ -608,22 +701,40 @@ function Scene({
   selectedPiece,
   rotationRequest,
   flipRequest,
+  level,
+  resetToken,
+  won,
+  levelTransitioning,
   onSelectPiece,
   onAnimationComplete,
+  onWin,
 }: {
   gameState: GameState;
   startedAt: number;
   selectedPiece: string | null;
   rotationRequest: number;
   flipRequest: number;
-  onSelectPiece: (id: string) => void;
+  level: LevelConfig;
+  resetToken: number;
+  won: boolean;
+  levelTransitioning: boolean;
+  onSelectPiece: (id: string | null) => void;
   onAnimationComplete: () => void;
+  onWin: () => void;
 }) {
   const { camera, invalidate, size } = useThree();
-  const [, setGrid] = useState<GridMatrix>(emptyGrid);
   const gridRef = useRef<GridMatrix>(emptyGrid());
   const completionSent = useRef(false);
   const focus = useRef(new THREE.Vector3());
+  const fixedById = useMemo(() => new Map(level.fixedPieces.map((piece) => [piece.pieceId, piece])), [level.fixedPieces]);
+  const availablePieces = useMemo(() => PIECES.filter((piece) => !fixedById.has(piece.id)), [fixedById]);
+  const storageById = useMemo(() => {
+    return new Map(availablePieces.map((piece, index) => [piece.id, STORAGE_SLOTS[index]]));
+  }, [availablePieces]);
+
+  useEffect(() => {
+    if (selectedPiece && fixedById.has(selectedPiece as PieceId)) onSelectPiece(null);
+  }, [fixedById, onSelectPiece, selectedPiece]);
   const cameraTargets = useMemo(() => {
     const aspect = Math.max(0.45, size.width / Math.max(1, size.height));
     const halfFov = THREE.MathUtils.degToRad(15);
@@ -642,7 +753,6 @@ function Scene({
 
   const commitGrid = useCallback((nextGrid: GridMatrix) => {
     gridRef.current = nextGrid;
-    setGrid(nextGrid);
   }, []);
 
   const canPlace = useCallback((pieceId: string, cells: GridCell[]) => cells.every(({ row, column }) => (
@@ -658,12 +768,31 @@ function Scene({
     if (!valid) return false;
     cells.forEach(({ row, column }) => { cleared[row][column] = pieceId; });
     commitGrid(cleared);
+    if (cleared.every((row) => row.every((value) => value !== null))) onWin();
     return true;
-  }, [commitGrid]);
+  }, [commitGrid, onWin]);
 
   const clearPiece = useCallback((pieceId: string) => {
     commitGrid(gridRef.current.map((row) => row.map((value) => value === pieceId ? null : value)));
   }, [commitGrid]);
+
+  useEffect(() => {
+    const nextGrid = emptyGrid();
+    for (const fixedPiece of level.fixedPieces) {
+      const definition = PIECES.find((piece) => piece.id === fixedPiece.pieceId);
+      if (!definition) continue;
+      const cells = cellsForPlacement(
+        fixedAnchorFor(definition, fixedPiece),
+        definition.cells,
+        fixedPiece.rotation,
+        fixedPiece.flipped,
+      );
+      for (const { row, column } of cells) {
+        if (row >= 0 && row < ROWS && column >= 0 && column < COLUMNS) nextGrid[row][column] = fixedPiece.pieceId;
+      }
+    }
+    commitGrid(nextGrid);
+  }, [commitGrid, level.fixedPieces, resetToken]);
 
   useFrame(() => {
     if (gameState === "MENU") {
@@ -710,16 +839,21 @@ function Scene({
         shadow-normalBias={0.018}
         shadow-radius={5}
       />
-      <ClamshellCase gameState={gameState} />
+      <ClamshellCase gameState={gameState} won={won} />
       {PIECES.map((definition) => (
         <Polyomino
           key={definition.id}
           definition={definition}
           gameState={gameState}
-          startedAt={startedAt}
           selected={selectedPiece === definition.id}
           rotationRequest={rotationRequest}
           flipRequest={flipRequest}
+          storagePosition={storageById.get(definition.id) ?? definition.trayPosition}
+          fixedPiece={fixedById.get(definition.id) ?? null}
+          resetToken={resetToken}
+          levelTransitioning={levelTransitioning}
+          unboxOrder={availablePieces.findIndex((piece) => piece.id === definition.id)}
+          availablePieceCount={availablePieces.length}
           onSelect={onSelectPiece}
           canPlace={canPlace}
           placePiece={placePiece}
@@ -740,16 +874,52 @@ export function PuzzleScene() {
   const [selectedPiece, setSelectedPiece] = useState<string | null>(null);
   const [rotationRequest, setRotationRequest] = useState(0);
   const [flipRequest, setFlipRequest] = useState(0);
+  const [levelIndex, setLevelIndex] = useState(0);
+  const [resetToken, setResetToken] = useState(0);
+  const [won, setWon] = useState(false);
+  const [levelTransitioning, setLevelTransitioning] = useState(false);
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
+  const levelTransitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectedPieceLocked = selectedPiece
+    ? LEVELS[levelIndex].fixedPieces.some((piece) => piece.pieceId === selectedPiece)
+    : false;
+
+  const beginLevelTransition = useCallback(() => {
+    if (levelTransitionTimer.current) clearTimeout(levelTransitionTimer.current);
+    setLevelTransitioning(true);
+    levelTransitionTimer.current = setTimeout(() => {
+      setLevelTransitioning(false);
+      levelTransitionTimer.current = null;
+    }, 780);
+  }, []);
+
+  useEffect(() => () => {
+    if (levelTransitionTimer.current) clearTimeout(levelTransitionTimer.current);
+  }, []);
 
   const requestRotation = useCallback(() => {
-    if (gameState === "PLAYING" && selectedPiece) setRotationRequest((request) => request + 1);
-  }, [gameState, selectedPiece]);
+    if (gameState === "PLAYING" && selectedPiece && !selectedPieceLocked && !levelTransitioning) setRotationRequest((request) => request + 1);
+  }, [gameState, levelTransitioning, selectedPiece, selectedPieceLocked]);
 
   const requestFlip = useCallback(() => {
-    if (gameState === "PLAYING" && selectedPiece) setFlipRequest((request) => request + 1);
-  }, [gameState, selectedPiece]);
+    if (gameState === "PLAYING" && selectedPiece && !selectedPieceLocked && !levelTransitioning) setFlipRequest((request) => request + 1);
+  }, [gameState, levelTransitioning, selectedPiece, selectedPieceLocked]);
+
+  const resetLevel = useCallback(() => {
+    beginLevelTransition();
+    setSelectedPiece(null);
+    setWon(false);
+    setResetToken((token) => token + 1);
+  }, [beginLevelTransition]);
+
+  const selectLevel = useCallback((nextIndex: number) => {
+    beginLevelTransition();
+    setLevelIndex(nextIndex);
+    setSelectedPiece(null);
+    setWon(false);
+    setResetToken((token) => token + 1);
+  }, [beginLevelTransition]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -766,7 +936,7 @@ export function PuzzleScene() {
   }, [requestFlip, requestRotation]);
 
   return (
-    <div className="webgl-stage">
+    <div className={`webgl-stage${levelTransitioning ? " webgl-stage--transitioning" : ""}`}>
       <Canvas
         key={canvasKey}
         frameloop="demand"
@@ -789,8 +959,13 @@ export function PuzzleScene() {
           selectedPiece={selectedPiece}
           rotationRequest={rotationRequest}
           flipRequest={flipRequest}
+          level={LEVELS[levelIndex]}
+          resetToken={resetToken}
+          won={won}
+          levelTransitioning={levelTransitioning}
           onSelectPiece={setSelectedPiece}
           onAnimationComplete={() => setGameState("PLAYING")}
+          onWin={() => setWon(true)}
         />
       </Canvas>
 
@@ -803,14 +978,36 @@ export function PuzzleScene() {
         </div>
       )}
 
+      <div className={`level-toolbar${gameState === "PLAYING" ? " level-toolbar--visible" : ""}`} aria-hidden={gameState !== "PLAYING"}>
+        <label htmlFor="level-select">Challenge</label>
+        <select id="level-select" value={levelIndex} disabled={levelTransitioning} onChange={(event) => selectLevel(Number(event.target.value))}>
+          {LEVELS.map((level, index) => <option key={level.id} value={index}>{level.name}</option>)}
+        </select>
+        <button type="button" disabled={levelTransitioning} onClick={resetLevel}>Reset Level</button>
+      </div>
+
       <div className="bottom-hud">
-        <div className={`piece-tools${selectedPiece && gameState === "PLAYING" ? " piece-tools--visible" : ""}`} aria-hidden={!selectedPiece || gameState !== "PLAYING"}>
+        <div className={`piece-tools${selectedPiece && !selectedPieceLocked && gameState === "PLAYING" ? " piece-tools--visible" : ""}`} aria-hidden={!selectedPiece || selectedPieceLocked || gameState !== "PLAYING"}>
           <span>Piece {selectedPiece}</span>
-          <button type="button" onClick={requestRotation} aria-label={`Rotate piece ${selectedPiece ?? ""} clockwise`}>↻ Rotate</button>
-          <button type="button" onClick={requestFlip} aria-label={`Flip piece ${selectedPiece ?? ""} horizontally`}>↔ Flip</button>
+          <button type="button" disabled={levelTransitioning} onClick={requestRotation} aria-label={`Rotate piece ${selectedPiece ?? ""} clockwise`}>↻ Rotate</button>
+          <button type="button" disabled={levelTransitioning} onClick={requestFlip} aria-label={`Flip piece ${selectedPiece ?? ""} horizontally`}>↔ Flip</button>
         </div>
         <p aria-hidden={gameState !== "PLAYING"} className={`play-hint${gameState === "PLAYING" ? " play-hint--visible" : ""}`}>Drag · R/Space rotate · F flip</p>
       </div>
+
+      {won && (
+        <div className="victory-overlay" role="dialog" aria-modal="true" aria-labelledby="victory-title">
+          <div className="victory-card">
+            <span className="victory-card__spark">✦</span>
+            <p className="victory-card__eyebrow">Board complete</p>
+            <h2 id="victory-title">Puzzle solved!</h2>
+            <button type="button" onClick={() => {
+              if (levelIndex < LEVELS.length - 1) selectLevel(levelIndex + 1);
+              else resetLevel();
+            }}>{levelIndex < LEVELS.length - 1 ? "Next Level" : "Play Again"}</button>
+          </div>
+        </div>
+      )}
 
       {contextLost && (
         <div className="webgl-recovery" role="alert">
