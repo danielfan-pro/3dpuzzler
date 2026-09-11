@@ -2,11 +2,13 @@
 
 import { RoundedBox } from "@react-three/drei";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
+import { Capacitor } from "@capacitor/core";
 import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { LEVELS, type FixedPiece, type LevelConfig, type PieceId } from "@/data/levels";
 import { loadGameProgress, saveGameProgress, type GameProgress, type StoredPiecePlacement } from "@/lib/gameStorage";
+import { completionHaptic, invalidPlacementHaptic, placementHaptic, selectionHaptic } from "@/lib/nativeHaptics";
 
 type Point3 = readonly [number, number, number];
 type Cell = readonly [number, number];
@@ -691,6 +693,7 @@ function Polyomino({
     event.nativeEvent.preventDefault();
     cursorCellIndex.current = Number(event.object.userData.cellIndex ?? cursorCellIndex.current);
     onSelect(definition.id);
+    void selectionHaptic();
     onTransformChange({ id: definition.id, rotation: rotation.current, flipped: flipped.current });
     if (levelTransitioning) return;
     const pointerTarget = event.nativeEvent.target as Element;
@@ -782,6 +785,7 @@ function Polyomino({
     if (snapAnchor.current) {
       const targetCells = currentCells(snapAnchor.current);
       if (placePiece(definition.id, targetCells)) {
+        void placementHaptic();
         placed.current = true;
         anchor.current = snapAnchor.current;
         const boardTarget = anchorToWorld(snapAnchor.current);
@@ -795,7 +799,10 @@ function Polyomino({
       }
     }
 
-    if (!placed.current) resetToTray(false);
+    if (!placed.current) {
+      void invalidPlacementHaptic();
+      resetToTray(false);
+    }
     snapAnchor.current = null;
     invalidate();
   };
@@ -1003,7 +1010,9 @@ function Scene({
   const restoredById = useMemo(() => new Map(restoredPieces.map((piece) => [piece.pieceId, piece])), [restoredPieces]);
   const availablePieces = useMemo(() => PIECES.filter((piece) => !fixedById.has(piece.id) && !restoredById.has(piece.id)), [fixedById, restoredById]);
   const aspect = size.width / Math.max(1, size.height);
-  const layoutMode: LayoutMode = aspect >= 1 || size.width >= 768 ? "LANDSCAPE_TABLET_DESKTOP" : "MOBILE_PORTRAIT";
+  const layoutMode: LayoutMode = Capacitor.isNativePlatform() || aspect >= 1 || size.width >= 768
+    ? "LANDSCAPE_TABLET_DESKTOP"
+    : "MOBILE_PORTRAIT";
   const storageById = useMemo(() => {
     const slots = layoutMode === "LANDSCAPE_TABLET_DESKTOP" ? LANDSCAPE_STORAGE_SLOTS : MOBILE_STORAGE_SLOTS;
     return new Map(availablePieces.map((piece, index) => [
@@ -1344,6 +1353,7 @@ export function PuzzleScene() {
           onSelectPiece={selectPiece}
           onAnimationComplete={() => setGameState("PLAYING")}
           onWin={() => {
+            void completionHaptic();
             setWon(true);
             updateProgress((previous) => ({
               ...previous,
