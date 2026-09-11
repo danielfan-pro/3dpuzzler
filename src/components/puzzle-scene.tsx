@@ -310,6 +310,7 @@ function Polyomino({
   const handledRotationRequest = useRef(rotationRequest);
   const handledFlipRequest = useRef(flipRequest);
   const previousLayoutMode = useRef(layoutMode);
+  const preserveTrayTransform = useRef(false);
   const dragTarget = useRef(new THREE.Vector3(...storagePosition));
   const motionTarget = useRef<THREE.Vector3 | null>(null);
   const solved = useMemo(() => anchorToWorld(definition.solvedAnchor), [definition.solvedAnchor]);
@@ -325,6 +326,21 @@ function Polyomino({
     }
     return { position: tray, rotation: definition.trayRotation, flipped: false, anchor: null };
   }, [definition, fixedPiece, restoredPiece, tray]);
+  const hitArea = useMemo(() => {
+    const xs = definition.cells.map(([x]) => x * GRID_CELL_SIZE_X);
+    const zs = definition.cells.map(([, z]) => z * GRID_CELL_SIZE_Z);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minZ = Math.min(...zs);
+    const maxZ = Math.max(...zs);
+    const padding = 0.22;
+    return {
+      centerX: (minX + maxX) / 2,
+      centerZ: (minZ + maxZ) / 2,
+      width: maxX - minX + 0.75 + padding * 2,
+      depth: maxZ - minZ + 0.75 + padding * 2,
+    };
+  }, [definition.cells]);
   const { camera, gl, invalidate } = useThree();
 
   const currentCells = useCallback((targetAnchor: GridCell, targetRotation = rotation.current, targetFlipped = flipped.current) => (
@@ -351,17 +367,20 @@ function Polyomino({
     };
   }, [camera, gl.domElement]);
 
-  const resetToTray = useCallback(() => {
+  const resetToTray = useCallback((resetTransform = false) => {
     const group = groupRef.current;
     dragging.current = false;
     placed.current = false;
     anchor.current = null;
     snapAnchor.current = null;
-    rotation.current = definition.trayRotation;
-    flipped.current = false;
-    if (selected) onTransformChange({ id: definition.id, rotation: definition.trayRotation, flipped: false });
-    if (group) group.rotation.set(0, definition.trayRotation * (Math.PI / 2), 0);
-    if (bodyRef.current) bodyRef.current.scale.x = 1;
+    preserveTrayTransform.current = !resetTransform && Boolean(restoredPiece);
+    if (resetTransform) {
+      rotation.current = definition.trayRotation;
+      flipped.current = false;
+      if (group) group.rotation.set(0, definition.trayRotation * (Math.PI / 2), 0);
+      if (bodyRef.current) bodyRef.current.scale.x = 1;
+    }
+    if (selected) onTransformChange({ id: definition.id, rotation: rotation.current, flipped: flipped.current });
     if (group) {
       gsap.killTweensOf([group.position, group.scale]);
       gsap.to(group.position, { x: tray.x, y: tray.y, z: tray.z, duration: 0.32, ease: "power2.inOut", onUpdate: invalidate });
@@ -370,7 +389,7 @@ function Polyomino({
     motionTarget.current = null;
     onPlacementRemove(definition.id);
     invalidate();
-  }, [definition.id, definition.trayRotation, invalidate, onPlacementRemove, onTransformChange, selected, tray]);
+  }, [definition.id, definition.trayRotation, invalidate, onPlacementRemove, onTransformChange, restoredPiece, selected, tray]);
 
   useEffect(() => {
     if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
@@ -537,9 +556,18 @@ function Polyomino({
     const body = bodyRef.current;
     if (!group || !body) return;
     gsap.killTweensOf([group.position, group.rotation, group.scale, body.scale]);
+    const keepCurrentTrayTransform = preserveTrayTransform.current && !targetTransform.anchor && !levelTransitioning;
+    preserveTrayTransform.current = false;
     dragging.current = false;
     snapAnchor.current = null;
     motionTarget.current = null;
+    if (keepCurrentTrayTransform) {
+      placed.current = false;
+      anchor.current = null;
+      gsap.to(group.position, { x: targetTransform.position.x, y: targetTransform.position.y, z: targetTransform.position.z, duration: 0.32, ease: "power2.inOut", onUpdate: invalidate });
+      gsap.to(group.scale, { x: TRAY_SCALE, y: TRAY_SCALE, z: TRAY_SCALE, duration: 0.25, ease: "power2.out", onUpdate: invalidate });
+      return;
+    }
     placed.current = Boolean(targetTransform.anchor);
     anchor.current = targetTransform.anchor;
     rotation.current = targetTransform.rotation;
@@ -685,7 +713,7 @@ function Polyomino({
     lastStationaryClick.current = stationary ? now : 0;
     if (intentionalReset) {
       clearPiece(definition.id);
-      resetToTray();
+      resetToTray(true);
       return;
     }
 
@@ -706,7 +734,7 @@ function Polyomino({
       }
     }
 
-    if (!placed.current) resetToTray();
+    if (!placed.current) resetToTray(false);
     snapAnchor.current = null;
     invalidate();
   };
@@ -723,6 +751,15 @@ function Polyomino({
       onPointerCancel={handlePointerUp}
     >
       <group ref={bodyRef}>
+        {!fixedPiece && !restoredPiece && (
+          <mesh
+            position={[hitArea.centerX, 0, hitArea.centerZ]}
+            userData={{ selectionZone: true }}
+          >
+            <boxGeometry args={[hitArea.width, 0.8, hitArea.depth]} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} colorWrite={false} />
+          </mesh>
+        )}
         {definition.cells.map(([x, z], index) => (
           <mesh key={`${x}-${z}-${index}`} position={[x * GRID_CELL_SIZE_X, 0, z * GRID_CELL_SIZE_Z]} userData={{ cellIndex: index }} castShadow receiveShadow>
             <sphereGeometry args={[0.375, 24, 16]} />
@@ -1091,6 +1128,7 @@ export function PuzzleScene() {
   const [resetToken, setResetToken] = useState(0);
   const [won, setWon] = useState(false);
   const [levelTransitioning, setLevelTransitioning] = useState(false);
+  const [levelMenuOpen, setLevelMenuOpen] = useState(false);
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
   const [dprCap, setDprCap] = useState(1.5);
@@ -1187,6 +1225,7 @@ export function PuzzleScene() {
   }, [beginLevelTransition, currentLevelId, selectPiece, updateProgress]);
 
   const selectLevel = useCallback((nextIndex: number) => {
+    setLevelMenuOpen(false);
     beginLevelTransition();
     setLevelIndex(nextIndex);
     selectPiece(null);
@@ -1211,13 +1250,7 @@ export function PuzzleScene() {
   }, [requestFlip, requestRotation]);
 
   return (
-    <div
-      className={`webgl-stage${levelTransitioning ? " webgl-stage--transitioning" : ""}`}
-      onPointerDownCapture={(event) => {
-        const activeElement = document.activeElement;
-        if (activeElement instanceof HTMLElement && activeElement !== event.target) activeElement.blur();
-      }}
-    >
+    <div className={`webgl-stage${levelTransitioning ? " webgl-stage--transitioning" : ""}`}>
       <Canvas
         key={canvasKey}
         frameloop="demand"
@@ -1273,14 +1306,45 @@ export function PuzzleScene() {
         </div>
       )}
 
-      <div className={`level-toolbar${gameState === "PLAYING" ? " level-toolbar--visible" : ""}`} aria-hidden={gameState !== "PLAYING"}>
-        <label htmlFor="level-select">Challenge</label>
-        <select id="level-select" value={levelIndex} disabled={levelTransitioning} onChange={(event) => selectLevel(Number(event.target.value))}>
-          {LEVELS.map((level, index) => (
-            <option key={level.id} value={index}>{progress.completedLevels.includes(level.id) ? `✓ ${level.name}` : level.name}</option>
-          ))}
-        </select>
-        <button type="button" disabled={levelTransitioning} onClick={resetLevel}>Reset Level</button>
+      <div
+        className={`level-toolbar${gameState === "PLAYING" ? " level-toolbar--visible" : ""}`}
+        aria-hidden={gameState !== "PLAYING"}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setLevelMenuOpen(false);
+        }}
+      >
+        <span className="level-toolbar__label">Challenge</span>
+        <div className="level-picker">
+          <button
+            type="button"
+            className="level-picker__trigger"
+            disabled={levelTransitioning}
+            aria-haspopup="listbox"
+            aria-expanded={levelMenuOpen}
+            onClick={() => setLevelMenuOpen((open) => !open)}
+          >
+            <span>{progress.completedLevels.includes(currentLevelId) ? "✓ " : ""}{LEVELS[levelIndex].name}</span>
+            <span className="level-picker__chevron" aria-hidden="true">⌄</span>
+          </button>
+          {levelMenuOpen && (
+            <div className="level-picker__menu" role="listbox" aria-label="Challenge level">
+              {LEVELS.map((level, index) => (
+                <button
+                  key={level.id}
+                  type="button"
+                  role="option"
+                  aria-selected={index === levelIndex}
+                  className="level-picker__option"
+                  onClick={() => selectLevel(index)}
+                >
+                  <span aria-hidden="true" className="level-picker__check">{progress.completedLevels.includes(level.id) ? "✓" : ""}</span>
+                  <span>{level.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button type="button" className="level-toolbar__reset" disabled={levelTransitioning} onClick={resetLevel}>Reset Level</button>
       </div>
 
       <div className={`bottom-hud${gameState === "PLAYING" ? " bottom-hud--visible" : ""}`} aria-hidden={gameState !== "PLAYING"}>
