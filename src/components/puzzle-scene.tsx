@@ -6,6 +6,7 @@ import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { LEVELS, type FixedPiece, type LevelConfig, type PieceId } from "@/data/levels";
+import { loadGameProgress, saveGameProgress, type GameProgress, type StoredPiecePlacement } from "@/lib/gameStorage";
 
 type Point3 = readonly [number, number, number];
 type Cell = readonly [number, number];
@@ -30,7 +31,8 @@ type PieceDefinition = {
 
 const COLUMNS = 11;
 const ROWS = 5;
-const CELL_SIZE = 0.78;
+const GRID_CELL_SIZE_X = 0.78;
+const GRID_CELL_SIZE_Z = 0.78;
 const SOCKET_Y = 0.27;
 const REST_Y = 0.48;
 const PLACED_Y = 0.43;
@@ -42,8 +44,8 @@ const STORAGE_GRID_ANCHOR: Point3 = [0, REST_Y, 4.45 + SCENE_Z_OFFSET];
 const STORAGE_ROW_STRIDE = 2.4;
 const BOARD_WIDTH = 9.55;
 const BOARD_DEPTH = 4.9;
-const BOARD_MIN_X = -((COLUMNS - 1) * CELL_SIZE) / 2;
-const BOARD_MIN_Z = -((ROWS - 1) * CELL_SIZE) / 2;
+const BOARD_MIN_X = -((COLUMNS - 1) * GRID_CELL_SIZE_X) / 2;
+const BOARD_MIN_Z = -((ROWS - 1) * GRID_CELL_SIZE_Z) / 2;
 const DRAG_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), -LIFT_Y);
 const MENU_FOCUS = new THREE.Vector3(0, 0.08, 0);
 const PLAY_FOCUS = new THREE.Vector3(0, 0.08, 6.8);
@@ -97,9 +99,9 @@ function centeredStoragePosition(definition: PieceDefinition, slot: Point3): Poi
   const minZ = Math.min(...cells.map(([, z]) => z));
   const maxZ = Math.max(...cells.map(([, z]) => z));
   return [
-    slot[0] - ((minX + maxX) / 2) * CELL_SIZE * TRAY_SCALE,
+    slot[0] - ((minX + maxX) / 2) * GRID_CELL_SIZE_X * TRAY_SCALE,
     slot[1],
-    slot[2] - ((minZ + maxZ) / 2) * CELL_SIZE * TRAY_SCALE,
+    slot[2] - ((minZ + maxZ) / 2) * GRID_CELL_SIZE_Z * TRAY_SCALE,
   ];
 }
 
@@ -118,16 +120,16 @@ function fixedAnchorFor(definition: PieceDefinition, fixedPiece: FixedPiece): Gr
 
 function worldToAnchor(x: number, z: number): GridCell {
   return {
-    column: Math.round((x - BOARD_ANCHOR[0] - BOARD_MIN_X) / CELL_SIZE),
-    row: Math.round((z - BOARD_ANCHOR[2] - BOARD_MIN_Z) / CELL_SIZE),
+    column: Math.round((x - BOARD_ANCHOR[0] - BOARD_MIN_X) / GRID_CELL_SIZE_X),
+    row: Math.round((z - BOARD_ANCHOR[2] - BOARD_MIN_Z) / GRID_CELL_SIZE_Z),
   };
 }
 
 function anchorToWorld(anchor: GridCell): THREE.Vector3 {
   return new THREE.Vector3(
-    BOARD_ANCHOR[0] + BOARD_MIN_X + anchor.column * CELL_SIZE,
+    BOARD_ANCHOR[0] + BOARD_MIN_X + anchor.column * GRID_CELL_SIZE_X,
     PLACED_Y,
-    BOARD_ANCHOR[2] + BOARD_MIN_Z + anchor.row * CELL_SIZE,
+    BOARD_ANCHOR[2] + BOARD_MIN_Z + anchor.row * GRID_CELL_SIZE_Z,
   );
 }
 
@@ -162,7 +164,7 @@ function clampPieceToStorageSlot(
   group.updateMatrixWorld(true);
   const sphereRadius = 0.375;
   const bounds = definition.cells.reduce((result, [x, z]) => {
-    const world = group.localToWorld(new THREE.Vector3((flipped ? -x : x) * CELL_SIZE, 0, z * CELL_SIZE));
+    const world = group.localToWorld(new THREE.Vector3((flipped ? -x : x) * GRID_CELL_SIZE_X, 0, z * GRID_CELL_SIZE_Z));
     return {
       minX: Math.min(result.minX, world.x - sphereRadius),
       maxX: Math.max(result.maxX, world.x + sphereRadius),
@@ -202,6 +204,7 @@ function Polyomino({
   flipRequest,
   storagePosition,
   fixedPiece,
+  restoredPiece,
   resetToken,
   levelTransitioning,
   unboxOrder,
@@ -210,6 +213,8 @@ function Polyomino({
   canPlace,
   placePiece,
   clearPiece,
+  onPlacementChange,
+  onPlacementRemove,
 }: {
   definition: PieceDefinition;
   gameState: GameState;
@@ -218,6 +223,7 @@ function Polyomino({
   flipRequest: number;
   storagePosition: Point3;
   fixedPiece: FixedPiece | null;
+  restoredPiece: StoredPiecePlacement | null;
   resetToken: number;
   levelTransitioning: boolean;
   unboxOrder: number;
@@ -226,6 +232,8 @@ function Polyomino({
   canPlace: (id: string, cells: GridCell[]) => boolean;
   placePiece: (id: string, cells: GridCell[]) => boolean;
   clearPiece: (id: string) => void;
+  onPlacementChange: (placement: StoredPiecePlacement) => void;
+  onPlacementRemove: (pieceId: PieceId) => void;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
@@ -245,10 +253,16 @@ function Polyomino({
   const solved = useMemo(() => anchorToWorld(definition.solvedAnchor), [definition.solvedAnchor]);
   const tray = useMemo(() => new THREE.Vector3(...storagePosition), [storagePosition]);
   const targetTransform = useMemo(() => {
-    if (!fixedPiece) return { position: tray, rotation: definition.trayRotation, flipped: false, anchor: null };
-    const targetAnchor = fixedAnchorFor(definition, fixedPiece);
-    return { position: anchorToWorld(targetAnchor), rotation: fixedPiece.rotation, flipped: fixedPiece.flipped, anchor: targetAnchor };
-  }, [definition, fixedPiece, tray]);
+    if (fixedPiece) {
+      const targetAnchor = fixedAnchorFor(definition, fixedPiece);
+      return { position: anchorToWorld(targetAnchor), rotation: fixedPiece.rotation, flipped: fixedPiece.flipped, anchor: targetAnchor };
+    }
+    if (restoredPiece) {
+      const targetAnchor = { column: restoredPiece.anchor[0], row: restoredPiece.anchor[1] };
+      return { position: anchorToWorld(targetAnchor), rotation: restoredPiece.rotation, flipped: restoredPiece.flipped, anchor: targetAnchor };
+    }
+    return { position: tray, rotation: definition.trayRotation, flipped: false, anchor: null };
+  }, [definition, fixedPiece, restoredPiece, tray]);
   const { camera, gl, invalidate } = useThree();
 
   const currentCells = useCallback((targetAnchor: GridCell, targetRotation = rotation.current, targetFlipped = flipped.current) => (
@@ -287,8 +301,9 @@ function Polyomino({
     if (bodyRef.current) bodyRef.current.scale.x = 1;
     if (group) gsap.to(group.scale, { x: TRAY_SCALE, y: TRAY_SCALE, z: TRAY_SCALE, duration: 0.2, ease: "power2.out", onUpdate: invalidate });
     motionTarget.current = tray.clone();
+    onPlacementRemove(definition.id);
     invalidate();
-  }, [definition.trayRotation, invalidate, tray]);
+  }, [definition.id, definition.trayRotation, invalidate, onPlacementRemove, tray]);
 
   useEffect(() => {
     if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
@@ -301,7 +316,7 @@ function Polyomino({
     const previousRotation = rotation.current;
     const previousPosition = group.position.clone();
     const [pivotX, pivotZ] = definition.cells[cursorCellIndex.current] ?? definition.cells[0];
-    const localPivot = new THREE.Vector3((flipped.current ? -pivotX : pivotX) * CELL_SIZE, 0, pivotZ * CELL_SIZE);
+    const localPivot = new THREE.Vector3((flipped.current ? -pivotX : pivotX) * GRID_CELL_SIZE_X, 0, pivotZ * GRID_CELL_SIZE_Z);
 
     const attemptRotation = (direction: 1 | -1) => {
       group.position.copy(previousPosition);
@@ -326,6 +341,7 @@ function Polyomino({
       if (placed.current && nextAnchor) {
         if (!placePiece(definition.id, currentCells(nextAnchor, nextRotation))) return false;
         anchor.current = nextAnchor;
+        onPlacementChange({ pieceId: definition.id, anchor: [nextAnchor.column, nextAnchor.row], rotation: nextRotation, flipped: flipped.current });
       }
       if (dragging.current) {
         dragTarget.current.add(group.position.clone().sub(previousPosition));
@@ -346,7 +362,7 @@ function Polyomino({
         .to(group.rotation, { z: 0, duration: 0.04, ease: "power1.in" });
     }
     invalidate();
-  }, [canPlace, currentCells, definition, fixedPiece, gameState, invalidate, levelTransitioning, placePiece, rotationRequest, selected, storagePosition, visibleStorageBounds]);
+  }, [canPlace, currentCells, definition, fixedPiece, gameState, invalidate, levelTransitioning, onPlacementChange, placePiece, rotationRequest, selected, storagePosition, visibleStorageBounds]);
 
   useEffect(() => {
     if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
@@ -362,8 +378,8 @@ function Polyomino({
     const previousFlipped = flipped.current;
     const nextFlipped = !previousFlipped;
     const [pivotX, pivotZ] = definition.cells[cursorCellIndex.current] ?? definition.cells[0];
-    const oldLocalPivot = new THREE.Vector3((previousFlipped ? -pivotX : pivotX) * CELL_SIZE, 0, pivotZ * CELL_SIZE);
-    const nextLocalPivot = new THREE.Vector3((nextFlipped ? -pivotX : pivotX) * CELL_SIZE, 0, pivotZ * CELL_SIZE);
+    const oldLocalPivot = new THREE.Vector3((previousFlipped ? -pivotX : pivotX) * GRID_CELL_SIZE_X, 0, pivotZ * GRID_CELL_SIZE_Z);
+    const nextLocalPivot = new THREE.Vector3((nextFlipped ? -pivotX : pivotX) * GRID_CELL_SIZE_X, 0, pivotZ * GRID_CELL_SIZE_Z);
     group.updateMatrixWorld(true);
     const worldPivot = group.localToWorld(oldLocalPivot);
     body.scale.x = nextFlipped ? -1 : 1;
@@ -379,7 +395,10 @@ function Polyomino({
     }
     if (valid && placed.current && nextAnchor) {
       valid = placePiece(definition.id, currentCells(nextAnchor, rotation.current, nextFlipped));
-      if (valid) anchor.current = nextAnchor;
+      if (valid) {
+        anchor.current = nextAnchor;
+        onPlacementChange({ pieceId: definition.id, anchor: [nextAnchor.column, nextAnchor.row], rotation: rotation.current, flipped: nextFlipped });
+      }
     }
 
     if (!valid) {
@@ -400,7 +419,7 @@ function Polyomino({
     flipped.current = nextFlipped;
     motionTarget.current = null;
     invalidate();
-  }, [canPlace, currentCells, definition, fixedPiece, flipRequest, gameState, invalidate, levelTransitioning, placePiece, selected, storagePosition, visibleStorageBounds]);
+  }, [canPlace, currentCells, definition, fixedPiece, flipRequest, gameState, invalidate, levelTransitioning, onPlacementChange, placePiece, selected, storagePosition, visibleStorageBounds]);
 
   useEffect(() => {
     if (gameState !== "ANIMATING") return;
@@ -416,7 +435,7 @@ function Polyomino({
     timeline.set(body.scale, { x: 1, y: 1, z: 1 }, 0);
     timeline.set(group.scale, { x: 1, y: 1, z: 1 }, 0);
 
-    if (fixedPiece) {
+    if (targetTransform.anchor) {
       const reconfigureStart = 0.82 + availablePieceCount * 0.25;
       timeline.to(group.scale, { x: 0.06, y: 0.06, z: 0.06, duration: 0.12, ease: "power2.in" }, reconfigureStart);
       timeline.to(group.position, { x: targetTransform.position.x, y: targetTransform.position.y + 0.55, z: targetTransform.position.z, duration: 0.18, ease: "power2.inOut" }, reconfigureStart + 0.12);
@@ -436,7 +455,7 @@ function Polyomino({
     }
     timeline.play(0);
     return () => { timeline.kill(); };
-  }, [availablePieceCount, definition.solvedRotation, fixedPiece, gameState, invalidate, solved, targetTransform, unboxOrder]);
+  }, [availablePieceCount, definition.solvedRotation, gameState, invalidate, solved, targetTransform, unboxOrder]);
 
   useEffect(() => {
     if (gameState !== "PLAYING") return;
@@ -447,7 +466,7 @@ function Polyomino({
     dragging.current = false;
     snapAnchor.current = null;
     motionTarget.current = null;
-    placed.current = Boolean(fixedPiece);
+    placed.current = Boolean(targetTransform.anchor);
     anchor.current = targetTransform.anchor;
     rotation.current = targetTransform.rotation;
     flipped.current = targetTransform.flipped;
@@ -455,7 +474,7 @@ function Polyomino({
     const applyExactTarget = () => {
       group.position.copy(targetTransform.position);
       group.rotation.set(0, targetTransform.rotation * (Math.PI / 2), 0);
-      const targetScale = fixedPiece ? 1 : TRAY_SCALE;
+      const targetScale = targetTransform.anchor ? 1 : TRAY_SCALE;
       group.scale.setScalar(targetScale);
       body.scale.x = targetTransform.flipped ? -1 : 1;
       invalidate();
@@ -472,7 +491,7 @@ function Polyomino({
     timeline.to(group.position, { x: targetTransform.position.x, z: targetTransform.position.z, y: raisedY, duration: 0.4, ease: "power2.inOut" }, 0.2);
     timeline.to(group.rotation, { x: 0, y: targetTransform.rotation * (Math.PI / 2), z: 0, duration: 0.4, ease: "power2.inOut" }, 0.2);
     timeline.to(body.scale, { x: targetTransform.flipped ? -1 : 1, duration: 0.4, ease: "power2.inOut" }, 0.2);
-    timeline.to(group.scale, { x: fixedPiece ? 1 : TRAY_SCALE, y: fixedPiece ? 1 : TRAY_SCALE, z: fixedPiece ? 1 : TRAY_SCALE, duration: 0.4, ease: "power2.inOut" }, 0.2);
+    timeline.to(group.scale, { x: targetTransform.anchor ? 1 : TRAY_SCALE, y: targetTransform.anchor ? 1 : TRAY_SCALE, z: targetTransform.anchor ? 1 : TRAY_SCALE, duration: 0.4, ease: "power2.inOut" }, 0.2);
     timeline.to(group.position, { y: targetTransform.position.y, duration: 0.2, ease: "power2.out" }, 0.55);
     return () => { timeline.kill(); };
   }, [fixedPiece, gameState, invalidate, levelTransitioning, resetToken, targetTransform]);
@@ -499,7 +518,8 @@ function Polyomino({
 
     if (motionTarget.current) {
       group.position.lerp(motionTarget.current, 0.22);
-      group.scale.lerp(new THREE.Vector3(TRAY_SCALE, TRAY_SCALE, TRAY_SCALE), 0.3);
+      const targetScale = placed.current ? 1 : TRAY_SCALE;
+      group.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.3);
       if (group.position.distanceToSquared(motionTarget.current) < 0.0004) {
         group.position.copy(motionTarget.current);
         motionTarget.current = null;
@@ -551,10 +571,10 @@ function Polyomino({
       const visible = visibleStorageBounds();
       const cells = transformedCells(definition.cells, rotation.current, flipped.current);
       const radius = 0.375;
-      const minCellX = Math.min(...cells.map(([x]) => x * CELL_SIZE - radius));
-      const maxCellX = Math.max(...cells.map(([x]) => x * CELL_SIZE + radius));
-      const minCellZ = Math.min(...cells.map(([, z]) => z * CELL_SIZE - radius));
-      const maxCellZ = Math.max(...cells.map(([, z]) => z * CELL_SIZE + radius));
+      const minCellX = Math.min(...cells.map(([x]) => x * GRID_CELL_SIZE_X - radius));
+      const maxCellX = Math.max(...cells.map(([x]) => x * GRID_CELL_SIZE_X + radius));
+      const minCellZ = Math.min(...cells.map(([, z]) => z * GRID_CELL_SIZE_Z - radius));
+      const maxCellZ = Math.max(...cells.map(([, z]) => z * GRID_CELL_SIZE_Z + radius));
       dragTarget.current.set(
         THREE.MathUtils.clamp(hit.x, visible.minX - minCellX, visible.maxX - maxCellX),
         LIFT_Y,
@@ -590,6 +610,11 @@ function Polyomino({
         placed.current = true;
         anchor.current = snapAnchor.current;
         motionTarget.current = anchorToWorld(snapAnchor.current);
+        onPlacementChange({ pieceId: definition.id, anchor: [snapAnchor.current.column, snapAnchor.current.row], rotation: rotation.current, flipped: flipped.current });
+        if (groupRef.current) {
+          gsap.killTweensOf(groupRef.current.scale);
+          gsap.to(groupRef.current.scale, { x: 1, y: 1, z: 1, duration: 0.18, ease: "power2.out", onUpdate: invalidate });
+        }
       }
     }
 
@@ -616,7 +641,7 @@ function Polyomino({
     >
       <group ref={bodyRef}>
         {definition.cells.map(([x, z], index) => (
-          <mesh key={`${x}-${z}-${index}`} position={[x * CELL_SIZE, 0, z * CELL_SIZE]} userData={{ cellIndex: index }} castShadow receiveShadow>
+          <mesh key={`${x}-${z}-${index}`} position={[x * GRID_CELL_SIZE_X, 0, z * GRID_CELL_SIZE_Z]} userData={{ cellIndex: index }} castShadow receiveShadow>
             <sphereGeometry args={[0.375, 24, 16]} />
             <PlasticMaterial color={definition.color} />
           </mesh>
@@ -643,19 +668,19 @@ function Socket({ x, z }: { x: number; z: number }) {
 
 function SocketLattice() {
   const sockets = useMemo(() => Array.from({ length: COLUMNS * ROWS }, (_, index) => ({
-    x: BOARD_MIN_X + (index % COLUMNS) * CELL_SIZE,
-    z: BOARD_MIN_Z + Math.floor(index / COLUMNS) * CELL_SIZE,
+    x: BOARD_MIN_X + (index % COLUMNS) * GRID_CELL_SIZE_X,
+    z: BOARD_MIN_Z + Math.floor(index / COLUMNS) * GRID_CELL_SIZE_Z,
   })), []);
 
   return (
     <group>
       {Array.from({ length: ROWS + 1 }, (_, row) => (
-        <RoundedBox key={`row-${row}`} args={[8.72, 0.11, 0.12]} radius={0.035} smoothness={3} position={[0, 0.22, (row - ROWS / 2) * CELL_SIZE]} receiveShadow>
+        <RoundedBox key={`row-${row}`} args={[8.72, 0.11, 0.12]} radius={0.035} smoothness={3} position={[0, 0.22, (row - ROWS / 2) * GRID_CELL_SIZE_Z]} receiveShadow>
           <meshStandardMaterial color="#3d4042" roughness={0.45} metalness={0.08} />
         </RoundedBox>
       ))}
       {Array.from({ length: COLUMNS + 1 }, (_, column) => (
-        <RoundedBox key={`column-${column}`} args={[0.12, 0.11, 4.04]} radius={0.035} smoothness={3} position={[(column - COLUMNS / 2) * CELL_SIZE, 0.22, 0]} receiveShadow>
+        <RoundedBox key={`column-${column}`} args={[0.12, 0.11, 4.04]} radius={0.035} smoothness={3} position={[(column - COLUMNS / 2) * GRID_CELL_SIZE_X, 0.22, 0]} receiveShadow>
           <meshStandardMaterial color="#3d4042" roughness={0.45} metalness={0.08} />
         </RoundedBox>
       ))}
@@ -761,12 +786,15 @@ function Scene({
   rotationRequest,
   flipRequest,
   level,
+  restoredPieces,
   resetToken,
   won,
   levelTransitioning,
   onSelectPiece,
   onAnimationComplete,
   onWin,
+  onPlacementChange,
+  onPlacementRemove,
 }: {
   gameState: GameState;
   startedAt: number;
@@ -774,19 +802,23 @@ function Scene({
   rotationRequest: number;
   flipRequest: number;
   level: LevelConfig;
+  restoredPieces: readonly StoredPiecePlacement[];
   resetToken: number;
   won: boolean;
   levelTransitioning: boolean;
   onSelectPiece: (id: string | null) => void;
   onAnimationComplete: () => void;
   onWin: () => void;
+  onPlacementChange: (placement: StoredPiecePlacement) => void;
+  onPlacementRemove: (pieceId: PieceId) => void;
 }) {
   const { camera, invalidate, size } = useThree();
   const gridRef = useRef<GridMatrix>(emptyGrid());
   const completionSent = useRef(false);
   const focus = useRef(new THREE.Vector3());
   const fixedById = useMemo(() => new Map(level.fixedPieces.map((piece) => [piece.pieceId, piece])), [level.fixedPieces]);
-  const availablePieces = useMemo(() => PIECES.filter((piece) => !fixedById.has(piece.id)), [fixedById]);
+  const restoredById = useMemo(() => new Map(restoredPieces.map((piece) => [piece.pieceId, piece])), [restoredPieces]);
+  const availablePieces = useMemo(() => PIECES.filter((piece) => !fixedById.has(piece.id) && !restoredById.has(piece.id)), [fixedById, restoredById]);
   const storageById = useMemo(() => {
     return new Map(availablePieces.map((piece, index) => [
       piece.id,
@@ -859,8 +891,17 @@ function Scene({
         if (row >= 0 && row < ROWS && column >= 0 && column < COLUMNS) nextGrid[row][column] = fixedPiece.pieceId;
       }
     }
+    for (const restoredPiece of restoredPieces) {
+      if (fixedById.has(restoredPiece.pieceId)) continue;
+      const definition = PIECES.find((piece) => piece.id === restoredPiece.pieceId);
+      if (!definition) continue;
+      const anchor = { column: restoredPiece.anchor[0], row: restoredPiece.anchor[1] };
+      for (const { row, column } of cellsForPlacement(anchor, definition.cells, restoredPiece.rotation, restoredPiece.flipped)) {
+        if (row >= 0 && row < ROWS && column >= 0 && column < COLUMNS && nextGrid[row][column] === null) nextGrid[row][column] = restoredPiece.pieceId;
+      }
+    }
     commitGrid(nextGrid);
-  }, [commitGrid, level.fixedPieces, resetToken]);
+  }, [commitGrid, fixedById, level.fixedPieces, resetToken, restoredPieces]);
 
   useFrame(() => {
     if (gameState === "MENU") {
@@ -920,6 +961,7 @@ function Scene({
           flipRequest={flipRequest}
           storagePosition={storageById.get(definition.id) ?? definition.trayPosition}
           fixedPiece={fixedById.get(definition.id) ?? null}
+          restoredPiece={restoredById.get(definition.id) ?? null}
           resetToken={resetToken}
           levelTransitioning={levelTransitioning}
           unboxOrder={availablePieces.findIndex((piece) => piece.id === definition.id)}
@@ -928,6 +970,8 @@ function Scene({
           canPlace={canPlace}
           placePiece={placePiece}
           clearPiece={clearPiece}
+          onPlacementChange={onPlacementChange}
+          onPlacementRemove={onPlacementRemove}
         />
       ))}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.32, 3]} receiveShadow>
@@ -944,16 +988,53 @@ export function PuzzleScene() {
   const [selectedPiece, setSelectedPiece] = useState<string | null>(null);
   const [rotationRequest, setRotationRequest] = useState(0);
   const [flipRequest, setFlipRequest] = useState(0);
-  const [levelIndex, setLevelIndex] = useState(0);
+  const [levelIndex, setLevelIndex] = useState(() => {
+    const savedLevel = loadGameProgress().currentLevel;
+    const index = LEVELS.findIndex((level) => level.id === savedLevel);
+    return index >= 0 ? index : 0;
+  });
   const [resetToken, setResetToken] = useState(0);
   const [won, setWon] = useState(false);
   const [levelTransitioning, setLevelTransitioning] = useState(false);
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
+  const [progress, setProgress] = useState<GameProgress>(loadGameProgress);
   const levelTransitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentLevelId = LEVELS[levelIndex].id;
   const selectedPieceLocked = selectedPiece
     ? LEVELS[levelIndex].fixedPieces.some((piece) => piece.pieceId === selectedPiece)
     : false;
+
+  const updateProgress = useCallback((updater: (previous: GameProgress) => GameProgress) => {
+    setProgress((previous) => {
+      const next = updater(previous);
+      saveGameProgress(next);
+      return next;
+    });
+  }, []);
+
+  const savePlacement = useCallback((placement: StoredPiecePlacement) => {
+    updateProgress((previous) => {
+      const placements = previous.activeBoardState[String(currentLevelId)] ?? [];
+      return {
+        ...previous,
+        activeBoardState: {
+          ...previous.activeBoardState,
+          [String(currentLevelId)]: [...placements.filter((item) => item.pieceId !== placement.pieceId), placement],
+        },
+      };
+    });
+  }, [currentLevelId, updateProgress]);
+
+  const removePlacement = useCallback((pieceId: PieceId) => {
+    updateProgress((previous) => ({
+      ...previous,
+      activeBoardState: {
+        ...previous.activeBoardState,
+        [String(currentLevelId)]: (previous.activeBoardState[String(currentLevelId)] ?? []).filter((item) => item.pieceId !== pieceId),
+      },
+    }));
+  }, [currentLevelId, updateProgress]);
 
   const beginLevelTransition = useCallback(() => {
     if (levelTransitionTimer.current) clearTimeout(levelTransitionTimer.current);
@@ -980,16 +1061,21 @@ export function PuzzleScene() {
     beginLevelTransition();
     setSelectedPiece(null);
     setWon(false);
+    updateProgress((previous) => ({
+      ...previous,
+      activeBoardState: { ...previous.activeBoardState, [String(currentLevelId)]: [] },
+    }));
     setResetToken((token) => token + 1);
-  }, [beginLevelTransition]);
+  }, [beginLevelTransition, currentLevelId, updateProgress]);
 
   const selectLevel = useCallback((nextIndex: number) => {
     beginLevelTransition();
     setLevelIndex(nextIndex);
     setSelectedPiece(null);
     setWon(false);
+    updateProgress((previous) => ({ ...previous, currentLevel: LEVELS[nextIndex].id }));
     setResetToken((token) => token + 1);
-  }, [beginLevelTransition]);
+  }, [beginLevelTransition, updateProgress]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1030,12 +1116,23 @@ export function PuzzleScene() {
           rotationRequest={rotationRequest}
           flipRequest={flipRequest}
           level={LEVELS[levelIndex]}
+          restoredPieces={progress.activeBoardState[String(currentLevelId)] ?? []}
           resetToken={resetToken}
           won={won}
           levelTransitioning={levelTransitioning}
           onSelectPiece={setSelectedPiece}
           onAnimationComplete={() => setGameState("PLAYING")}
-          onWin={() => setWon(true)}
+          onWin={() => {
+            setWon(true);
+            updateProgress((previous) => ({
+              ...previous,
+              completedLevels: previous.completedLevels.includes(currentLevelId)
+                ? previous.completedLevels
+                : [...previous.completedLevels, currentLevelId],
+            }));
+          }}
+          onPlacementChange={savePlacement}
+          onPlacementRemove={removePlacement}
         />
       </Canvas>
 
@@ -1051,7 +1148,9 @@ export function PuzzleScene() {
       <div className={`level-toolbar${gameState === "PLAYING" ? " level-toolbar--visible" : ""}`} aria-hidden={gameState !== "PLAYING"}>
         <label htmlFor="level-select">Challenge</label>
         <select id="level-select" value={levelIndex} disabled={levelTransitioning} onChange={(event) => selectLevel(Number(event.target.value))}>
-          {LEVELS.map((level, index) => <option key={level.id} value={index}>{level.name}</option>)}
+          {LEVELS.map((level, index) => (
+            <option key={level.id} value={index}>{progress.completedLevels.includes(level.id) ? `✓ ${level.name}` : level.name}</option>
+          ))}
         </select>
         <button type="button" disabled={levelTransitioning} onClick={resetLevel}>Reset Level</button>
       </div>
