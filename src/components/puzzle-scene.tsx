@@ -1203,6 +1203,7 @@ function Scene({
 
 export function PuzzleScene() {
   const isNativeApp = Capacitor.isNativePlatform();
+  const showDevTools = process.env.NODE_ENV !== "production";
   const [gameState, setGameState] = useState<GameState>("MENU");
   const [startedAt, setStartedAt] = useState(0);
   const [selectedPiece, setSelectedPiece] = useState<string | null>(null);
@@ -1219,6 +1220,7 @@ export function PuzzleScene() {
   const [hintRewarded, setHintRewarded] = useState(false);
   const [levelTransitioning, setLevelTransitioning] = useState(false);
   const [levelMenuOpen, setLevelMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
   const [dprCap, setDprCap] = useState(1.5);
@@ -1250,6 +1252,23 @@ export function PuzzleScene() {
     window.addEventListener("resize", updateDprCap);
     return () => window.removeEventListener("resize", updateDprCap);
   }, []);
+
+  useEffect(() => {
+    if (!levelMenuOpen) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(".level-toolbar")) setLevelMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLevelMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePress);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePress);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [levelMenuOpen]);
 
   const updateProgress = useCallback((updater: (previous: GameProgress) => GameProgress) => {
     setProgress((previous) => {
@@ -1337,6 +1356,16 @@ export function PuzzleScene() {
     }));
     setResetToken((token) => token + 1);
   }, [beginLevelTransition, currentLevelId, selectPiece, updateProgress]);
+
+  const resetAllProgress = useCallback(() => {
+    if (!window.confirm("Reset all progress, completed levels, and hints?")) return;
+    const reset = { ...progress, completedLevels: [], currentLevel: 1, activeBoardState: {}, hintsRemaining: INITIAL_HINT_BALANCE, totalHintsUsed: 0, hintsUsedByLevel: {} };
+    saveGameProgress(reset);
+    setProgress(reset);
+    setLevelIndex(0);
+    setSettingsOpen(false);
+    resetLevel();
+  }, [progress, resetLevel]);
 
   const requestHint = useCallback(async () => {
     if (gameState !== "PLAYING" || won || levelTransitioning || hintInFlight.current) return;
@@ -1530,28 +1559,6 @@ export function PuzzleScene() {
           if (!event.currentTarget.contains(event.relatedTarget)) setLevelMenuOpen(false);
         }}
       >
-        {isNativeApp && (
-          <button
-            type="button"
-            className={`haptic-toggle-btn${hapticsEnabled ? "" : " is-muted"}`}
-            onClick={toggleHaptics}
-            aria-label="Toggle Haptics"
-            aria-pressed={hapticsEnabled}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="7" y="2" width="10" height="20" rx="2" />
-              {hapticsEnabled ? (
-                <>
-                  <path d="M2 8v8" />
-                  <path d="M22 8v8" />
-                </>
-              ) : (
-                <line x1="2" y1="2" x2="22" y2="22" />
-              )}
-            </svg>
-          </button>
-        )}
-        <span className="level-toolbar__label">Challenge</span>
         <div className="level-picker">
           <button
             type="button"
@@ -1591,7 +1598,18 @@ export function PuzzleScene() {
           <span>{hintThinking ? "Thinking…" : progress.hintsRemaining === 0 ? "Get hints" : "Hint"}</span>
           {!hintThinking && progress.hintsRemaining > 0 && <span className="level-toolbar__hint-count" aria-label={`${progress.hintsRemaining} hints remaining`}>{progress.hintsRemaining}</span>}
         </button>
+        <button type="button" className="settings-trigger" onClick={() => setSettingsOpen((open) => !open)} aria-label="Settings" aria-expanded={settingsOpen}><span className="settings-icon" aria-hidden="true" /></button>
       </div>
+
+      {settingsOpen && (
+        <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings" onClick={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
+          <div className="settings-panel">
+            <div className="settings-panel__header"><h2>Settings</h2><button type="button" className="settings-panel__close" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button></div>
+            {isNativeApp && <div className="settings-row"><span>Haptics</span><button type="button" className={`settings-switch${hapticsEnabled ? " is-on" : ""}`} onClick={toggleHaptics} aria-label="Toggle Haptics" aria-pressed={hapticsEnabled}><span /></button></div>}
+            {showDevTools && <button type="button" className="settings-panel__reset" onClick={resetAllProgress}>Reset All Progress</button>}
+          </div>
+        </div>
+      )}
 
       {hintFeedback && !won && (
         <div className="hint-toast" role="status">
@@ -1606,7 +1624,7 @@ export function PuzzleScene() {
           <button type="button" disabled={!selectedPiece || selectedPieceLocked || levelTransitioning} onClick={requestRotation} aria-label={`Rotate piece ${selectedPiece ?? ""} counter-clockwise`}>↺ Rotate</button>
           <button type="button" disabled={!selectedPiece || selectedPieceLocked || levelTransitioning} onClick={requestFlip} aria-label={`Flip piece ${selectedPiece ?? ""} horizontally`}>↔ Flip</button>
         </div>
-        <p aria-hidden={gameState !== "PLAYING"} className={`play-hint${gameState === "PLAYING" ? " play-hint--visible" : ""}`}>
+        <p aria-hidden={gameState !== "PLAYING"} className={`play-hint${gameState === "PLAYING" ? " play-hint--visible" : ""}${isNativeApp ? " play-hint--native" : ""}`}>
           <span className="play-hint__key">Drag</span><span>Move</span>
           <span className="play-hint__separator play-hint__desktop-only">·</span>
           <span className="play-hint__key play-hint__desktop-only">R / Space</span><span className="play-hint__desktop-only">Rotate</span>
@@ -1617,6 +1635,12 @@ export function PuzzleScene() {
           <span className="play-hint__key play-hint__mobile-only">Double-tap</span><span>Reset</span>
         </p>
       </div>
+
+      {isNativeApp && (
+        <p aria-hidden={gameState !== "PLAYING"} className={`play-hint play-hint--native${gameState === "PLAYING" ? " play-hint--visible" : ""}`}>
+          <span className="play-hint__key">Drag</span><span>Move</span><span className="play-hint__separator">·</span><span className="play-hint__key">Double-tap</span><span>Reset</span>
+        </p>
+      )}
 
       {won && (
         <div className="victory-overlay" role="dialog" aria-modal="true" aria-labelledby="victory-title">
