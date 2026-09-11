@@ -1452,7 +1452,7 @@ export function PuzzleScene() {
         <button type="button" className="level-toolbar__reset" disabled={levelTransitioning} onClick={resetLevel}>Reset Level</button>
       </div>
 
-      <div className={`bottom-hud${gameState === "PLAYING" ? " bottom-hud--visible" : ""}`} aria-hidden={gameState !== "PLAYING"}>
+      <div className={`bottom-hud${gameState === "PLAYING" && !won ? " bottom-hud--visible" : ""}`} aria-hidden={gameState !== "PLAYING" || won}>
         <div className={`piece-tools${gameState === "PLAYING" ? " piece-tools--visible" : ""}`}>
           <div className="piece-preview"><PiecePreview state={piecePreview} /></div>
           <button type="button" disabled={!selectedPiece || selectedPieceLocked || levelTransitioning} onClick={requestRotation} aria-label={`Rotate piece ${selectedPiece ?? ""} counter-clockwise`}>↺ Rotate</button>

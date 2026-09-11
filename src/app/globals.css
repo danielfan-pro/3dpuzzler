@@ -65,7 +65,7 @@ button, canvas { -webkit-tap-highlight-color: transparent; }
 .piece-tools button:disabled { pointer-events: none; cursor: default; opacity: .4; }
 .piece-tools button:not(:disabled):active { transform: scale(.96); filter: brightness(1.08); }
 .piece-tools button:focus-visible { outline: 3px solid rgba(0,122,255,.38); outline-offset: 3px; }
-.victory-overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 1.5rem; background: rgba(28,29,29,.28); backdrop-filter: blur(5px); z-index: 10; }
+.victory-overlay { position: absolute; inset: 0; z-index: 100; display: grid; place-items: center; padding: 1.5rem; background: rgba(28,29,29,.28); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }
 .victory-card { width: min(22rem, 100%); padding: 2rem; border: 1px solid rgba(255,255,255,.65); border-radius: 1.5rem; background: rgba(250,248,243,.94); text-align: center; box-shadow: 0 1.5rem 5rem rgba(0,0,0,.25); animation: victory-in .4s cubic-bezier(.2,.8,.2,1) both; }
 .victory-card__spark { display: block; color: #ff4128; font-size: 2rem; }
 .victory-card__eyebrow { margin: .6rem 0 .25rem; color: rgba(23,26,27,.58); font-size: .7rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
