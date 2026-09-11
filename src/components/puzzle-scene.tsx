@@ -40,7 +40,7 @@ const LIFT_Y = 0.95;
 const TRAY_SCALE = 0.85;
 const SCENE_Z_OFFSET = 1.2;
 const BOARD_ANCHOR: Point3 = [0, 0, SCENE_Z_OFFSET];
-const STORAGE_GRID_ANCHOR: Point3 = [0, REST_Y, 4.45 + SCENE_Z_OFFSET];
+const STORAGE_GRID_ANCHOR: Point3 = [0, REST_Y, 6.75 + SCENE_Z_OFFSET];
 const STORAGE_ROW_STRIDE = 2.4;
 const BOARD_WIDTH = 9.55;
 const BOARD_DEPTH = 4.9;
@@ -142,11 +142,11 @@ function storageBoundsFor([x, , z]: Point3) {
       : x < 3.1
         ? { minX: 0.1, maxX: 3.05 }
         : { minX: 3.2, maxX: 7.4 };
-  const vertical = localZ < 5.7
-    ? { minZ: 3.7, maxZ: 5.65 }
-    : localZ < 8.1
-      ? { minZ: 5.85, maxZ: 8.05 }
-      : { minZ: 8.25, maxZ: 11.55 };
+  const vertical = localZ < 7.95
+    ? { minZ: 5.35, maxZ: 7.9 }
+    : localZ < 10.35
+      ? { minZ: 8.05, maxZ: 10.3 }
+      : { minZ: 10.45, maxZ: 13.85 };
   return {
     ...horizontal,
     minZ: vertical.minZ + SCENE_Z_OFFSET,
@@ -228,7 +228,7 @@ function Polyomino({
   levelTransitioning: boolean;
   unboxOrder: number;
   availablePieceCount: number;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
   canPlace: (id: string, cells: GridCell[]) => boolean;
   placePiece: (id: string, cells: GridCell[]) => boolean;
   clearPiece: (id: string) => void;
@@ -315,8 +315,13 @@ function Polyomino({
     const group = groupRef.current;
     const previousRotation = rotation.current;
     const previousPosition = group.position.clone();
-    const [pivotX, pivotZ] = definition.cells[cursorCellIndex.current] ?? definition.cells[0];
-    const localPivot = new THREE.Vector3((flipped.current ? -pivotX : pivotX) * GRID_CELL_SIZE_X, 0, pivotZ * GRID_CELL_SIZE_Z);
+    const isStoredAtStart = !placed.current && !dragging.current;
+    const [cursorPivotX, cursorPivotZ] = definition.cells[cursorCellIndex.current] ?? definition.cells[0];
+    const storageXs = definition.cells.map(([x]) => (flipped.current ? -x : x) * GRID_CELL_SIZE_X);
+    const storageZs = definition.cells.map(([, z]) => z * GRID_CELL_SIZE_Z);
+    const pivotX = isStoredAtStart ? (Math.min(...storageXs) + Math.max(...storageXs)) / 2 : (flipped.current ? -cursorPivotX : cursorPivotX) * GRID_CELL_SIZE_X;
+    const pivotZ = isStoredAtStart ? (Math.min(...storageZs) + Math.max(...storageZs)) / 2 : cursorPivotZ * GRID_CELL_SIZE_Z;
+    const localPivot = new THREE.Vector3(pivotX, 0, pivotZ);
 
     const attemptRotation = (direction: 1 | -1) => {
       group.position.copy(previousPosition);
@@ -330,7 +335,7 @@ function Polyomino({
       group.position.add(pivotCorrection);
 
       const isStored = !placed.current && !dragging.current;
-      if (isStored && !clampPieceToStorageSlot(group, definition, storagePosition, flipped.current, visibleStorageBounds())) return false;
+      if (isStored) clampPieceToStorageSlot(group, definition, storagePosition, flipped.current, visibleStorageBounds());
 
       let nextAnchor: GridCell | null = null;
       if (placed.current || (dragging.current && snapAnchor.current)) {
@@ -615,6 +620,7 @@ function Polyomino({
           gsap.killTweensOf(groupRef.current.scale);
           gsap.to(groupRef.current.scale, { x: 1, y: 1, z: 1, duration: 0.18, ease: "power2.out", onUpdate: invalidate });
         }
+        onSelect(null);
       }
     }
 
@@ -631,10 +637,6 @@ function Polyomino({
       rotation={[0, definition.solvedRotation * (Math.PI / 2), 0]}
       raycast={fixedPiece || levelTransitioning ? () => null : undefined}
       onPointerDown={handlePointerDown}
-      onPointerOver={(event) => {
-        cursorCellIndex.current = Number(event.object.userData.cellIndex ?? cursorCellIndex.current);
-        onSelect(definition.id);
-      }}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
@@ -654,11 +656,11 @@ function Polyomino({
 function Socket({ x, z }: { x: number; z: number }) {
   return (
     <group position={[x, SOCKET_Y, z]}>
-      <mesh receiveShadow>
+      <mesh receiveShadow raycast={() => null}>
         <sphereGeometry args={[0.305, 20, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2]} />
         <meshStandardMaterial color="#151718" roughness={0.62} side={THREE.BackSide} />
       </mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]} receiveShadow>
+      <mesh rotation={[Math.PI / 2, 0, 0]} receiveShadow raycast={() => null}>
         <torusGeometry args={[0.31, 0.035, 8, 20]} />
         <meshStandardMaterial color="#45484a" roughness={0.4} metalness={0.08} />
       </mesh>
@@ -675,12 +677,12 @@ function SocketLattice() {
   return (
     <group>
       {Array.from({ length: ROWS + 1 }, (_, row) => (
-        <RoundedBox key={`row-${row}`} args={[8.72, 0.11, 0.12]} radius={0.035} smoothness={3} position={[0, 0.22, (row - ROWS / 2) * GRID_CELL_SIZE_Z]} receiveShadow>
+        <RoundedBox key={`row-${row}`} args={[8.72, 0.11, 0.12]} radius={0.035} smoothness={3} position={[0, 0.22, (row - ROWS / 2) * GRID_CELL_SIZE_Z]} receiveShadow raycast={() => null}>
           <meshStandardMaterial color="#3d4042" roughness={0.45} metalness={0.08} />
         </RoundedBox>
       ))}
       {Array.from({ length: COLUMNS + 1 }, (_, column) => (
-        <RoundedBox key={`column-${column}`} args={[0.12, 0.11, 4.04]} radius={0.035} smoothness={3} position={[(column - COLUMNS / 2) * GRID_CELL_SIZE_X, 0.22, 0]} receiveShadow>
+        <RoundedBox key={`column-${column}`} args={[0.12, 0.11, 4.04]} radius={0.035} smoothness={3} position={[(column - COLUMNS / 2) * GRID_CELL_SIZE_X, 0.22, 0]} receiveShadow raycast={() => null}>
           <meshStandardMaterial color="#3d4042" roughness={0.45} metalness={0.08} />
         </RoundedBox>
       ))}
@@ -741,19 +743,19 @@ function ClamshellCase({ gameState, won, boardVersion }: { gameState: GameState;
 
   return (
     <group ref={caseRef} position={BOARD_ANCHOR}>
-      <RoundedBox args={[10.15, 0.28, 5.5]} radius={0.2} smoothness={6} position={[0, -0.12, 0]} castShadow receiveShadow>
+      <RoundedBox args={[10.15, 0.28, 5.5]} radius={0.2} smoothness={6} position={[0, -0.12, 0]} castShadow receiveShadow raycast={() => null}>
         <meshStandardMaterial color="#202324" roughness={0.32} metalness={0.08} />
       </RoundedBox>
-      <RoundedBox args={[BOARD_WIDTH, 0.16, BOARD_DEPTH]} radius={0.12} smoothness={5} position={[0, 0.05, 0]} castShadow receiveShadow>
+      <RoundedBox args={[BOARD_WIDTH, 0.16, BOARD_DEPTH]} radius={0.12} smoothness={5} position={[0, 0.05, 0]} castShadow receiveShadow raycast={() => null}>
         <meshStandardMaterial color="#303335" roughness={0.46} metalness={0.08} />
       </RoundedBox>
       <SocketLattice />
-      <mesh rotation={[0, 0, Math.PI / 2]} position={[0, 0.12, -2.72]} castShadow receiveShadow>
+      <mesh rotation={[0, 0, Math.PI / 2]} position={[0, 0.12, -2.72]} castShadow receiveShadow raycast={() => null}>
         <cylinderGeometry args={[0.11, 0.11, 9.8, 20]} />
         <meshStandardMaterial color="#1b1e1f" roughness={0.3} metalness={0.1} />
       </mesh>
       <group ref={lidRef} position={[0, 0.86, -2.72]} rotation={[CLOSED_LID_ANGLE, 0, 0]}>
-        <RoundedBox args={[10.15, 0.1, 5.5]} radius={0.2} smoothness={6} position={[0, 0, -2.72]} castShadow receiveShadow>
+        <RoundedBox args={[10.15, 0.1, 5.5]} radius={0.2} smoothness={6} position={[0, 0, -2.72]} castShadow receiveShadow raycast={() => null}>
           <meshPhysicalMaterial
             ref={lidMaterialRef}
             color="#d9e2e3"
@@ -839,11 +841,12 @@ function Scene({
     );
     const menuDistance = fitDistance(12.4, 7.2);
     const toolbarReserve = Math.min(0.22, 88 / Math.max(1, size.height));
-    const playFocus = new THREE.Vector3(0, PLAY_FOCUS.y, portrait ? BOARD_ANCHOR[2] + 2.2 : 5.4);
+    const playFocus = new THREE.Vector3(0, PLAY_FOCUS.y, portrait ? BOARD_ANCHOR[2] + 5.1 : 6.3);
     const portraitBoardWidth = 10.15 / 0.8;
+    const fullSceneDistance = fitDistance(14.2, 18.2 / (1 - toolbarReserve));
     const playDistance = portrait
-      ? portraitBoardWidth / (2 * Math.tan(halfFov) * aspect)
-      : fitDistance(14.2, 15.8 / (1 - toolbarReserve));
+      ? Math.max(portraitBoardWidth / (2 * Math.tan(halfFov) * aspect), fullSceneDistance)
+      : fullSceneDistance;
     return {
       menu: new THREE.Vector3(0, menuDistance * 0.93, MENU_FOCUS.z + menuDistance * 0.37),
       play: new THREE.Vector3(0, playDistance * 0.985, playFocus.z + playDistance * 0.17),
@@ -974,7 +977,7 @@ function Scene({
           onPlacementRemove={onPlacementRemove}
         />
       ))}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.32, 3]} receiveShadow>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.32, 3]} receiveShadow raycast={() => null}>
         <planeGeometry args={[42, 36]} />
         <meshStandardMaterial color="#dcd8ce" roughness={0.92} />
       </mesh>
