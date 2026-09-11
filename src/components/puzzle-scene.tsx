@@ -13,6 +13,8 @@ type Cell = readonly [number, number];
 type GridCell = { row: number; column: number };
 type GameState = "MENU" | "ANIMATING" | "PLAYING";
 type GridMatrix = Array<Array<string | null>>;
+type LayoutMode = "LANDSCAPE_TABLET_DESKTOP" | "MOBILE_PORTRAIT";
+type PiecePreviewState = { id: PieceId; rotation: number; flipped: boolean };
 type CaptureTarget = {
   setPointerCapture: (pointerId: number) => void;
   hasPointerCapture: (pointerId: number) => boolean;
@@ -51,15 +53,26 @@ const MENU_FOCUS = new THREE.Vector3(0, 0.08, 0);
 const PLAY_FOCUS = new THREE.Vector3(0, 0.08, 6.8);
 const CLOSED_LID_ANGLE = Math.PI;
 const OPEN_LID_ANGLE = 0;
+const LEVEL_TRANSITION_MS = 750;
+const EMPTY_STORED_PLACEMENTS: readonly StoredPiecePlacement[] = [];
 
-const DESKTOP_STORAGE_SLOTS: readonly Point3[] = [
+const MOBILE_STORAGE_SLOTS: readonly Point3[] = [
   [-4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]], [-1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]], [1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]], [4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]],
   [-4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE], [-1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE], [1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE], [4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE],
   [-4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2], [-1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2], [1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2], [4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2],
 ];
 
+const LANDSCAPE_STORAGE_SLOTS: readonly Point3[] = [
+  [-11.55, REST_Y, -1.45], [-8.25, REST_Y, -1.45],
+  [-11.55, REST_Y, 1.3], [-8.25, REST_Y, 1.3],
+  [-11.55, REST_Y, 4.05], [-8.25, REST_Y, 4.05],
+  [8.25, REST_Y, -1.45], [11.55, REST_Y, -1.45],
+  [8.25, REST_Y, 1.3], [11.55, REST_Y, 1.3],
+  [8.25, REST_Y, 4.05], [11.55, REST_Y, 4.05],
+];
+
 const PIECES: readonly PieceDefinition[] = [
-  { id: "A", color: "#e9232e", cells: [[0, 0], [1, 0], [2, 0], [3, 0], [3, 1]], solvedAnchor: { column: 3, row: 4 }, solvedRotation: 2, trayPosition: [-7.2, REST_Y, 5], trayRotation: 0 },
+  { id: "A", color: "#ff3b30", cells: [[0, 0], [1, 0], [2, 0], [3, 0], [3, 1]], solvedAnchor: { column: 3, row: 4 }, solvedRotation: 2, trayPosition: [-7.2, REST_Y, 5], trayRotation: 0 },
   { id: "B", color: "#ee9b22", cells: [[0, 0], [1, 0], [2, 0], [1, -1], [0, 1]], solvedAnchor: { column: 5, row: 2 }, solvedRotation: 3, trayPosition: [-7.2, REST_Y, 9], trayRotation: 0 },
   { id: "C", color: "#ffd41f", cells: [[0, 0], [1, 0], [2, 0], [3, 0], [1, 1]], solvedAnchor: { column: 9, row: 4 }, solvedRotation: 2, trayPosition: [-2.6, REST_Y, 5], trayRotation: 0 },
   { id: "D", color: "#a9d532", cells: [[0, 0], [1, 0], [2, 0], [0, 1], [2, 1]], solvedAnchor: { column: 1, row: 3 }, solvedRotation: 1, trayPosition: [-7.2, REST_Y, 13], trayRotation: 0 },
@@ -69,7 +82,7 @@ const PIECES: readonly PieceDefinition[] = [
   { id: "H", color: "#0a9bd8", cells: [[0, 0], [1, 0], [2, 0], [0, 1], [0, 2]], solvedAnchor: { column: 0, row: 0 }, solvedRotation: 0, trayPosition: [-2.6, REST_Y, 13], trayRotation: 0 },
   { id: "I", color: "#1d58a5", cells: [[0, 0], [1, 0], [2, 0], [2, -1]], solvedAnchor: { column: 8, row: 2 }, solvedRotation: 0, trayPosition: [2.6, REST_Y, 13], trayRotation: 0 },
   { id: "J", color: "#6f258e", cells: [[0, 0], [1, 0], [1, 1], [2, 1], [2, 2]], solvedAnchor: { column: 2, row: 2 }, solvedRotation: 0, trayPosition: [7.1, REST_Y, 13], trayRotation: 0 },
-  { id: "K", color: "#b6162d", cells: [[1, 0], [2, 0], [0, 1], [1, 1]], solvedAnchor: { column: 6, row: 3 }, solvedRotation: 1, trayPosition: [-2.6, REST_Y, 9], trayRotation: 0 },
+  { id: "K", color: "#8b0000", cells: [[1, 0], [2, 0], [0, 1], [1, 1]], solvedAnchor: { column: 6, row: 3 }, solvedRotation: 1, trayPosition: [-2.6, REST_Y, 9], trayRotation: 0 },
   { id: "L", color: "#e85ba8", cells: [[0, 0], [1, 0], [1, 1], [2, 1], [3, 1]], solvedAnchor: { column: 8, row: 1 }, solvedRotation: 2, trayPosition: [2.6, REST_Y, 5], trayRotation: 0 },
 ];
 
@@ -90,6 +103,36 @@ function rotateCell([x, z]: Cell, steps: number): Cell {
 
 function transformedCells(cells: readonly Cell[], rotation: number, flipped = false): Cell[] {
   return cells.map((cell) => rotateCell([flipped ? -cell[0] : cell[0], cell[1]], rotation));
+}
+
+function PiecePreview({ state }: { state: PiecePreviewState | null }) {
+  if (!state) return <span className="piece-preview__empty">No piece selected</span>;
+  const definition = PIECES.find((piece) => piece.id === state.id);
+  if (!definition) return <span className="piece-preview__empty">No piece selected</span>;
+  const cells = transformedCells(definition.cells, state.rotation, state.flipped);
+  const minX = Math.min(...cells.map(([x]) => x));
+  const maxX = Math.max(...cells.map(([x]) => x));
+  const minZ = Math.min(...cells.map(([, z]) => z));
+  const maxZ = Math.max(...cells.map(([, z]) => z));
+  const pitch = 12;
+  const padding = 8;
+  const width = (maxX - minX) * pitch + pitch + padding * 2;
+  const height = (maxZ - minZ) * pitch + pitch + padding * 2;
+  return (
+    <svg className="piece-preview__svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label={`Selected piece ${state.id}`}>
+      {cells.map(([x, z], index) => (
+        <circle
+          key={`${x}-${z}-${index}`}
+          cx={(x - minX) * pitch + pitch / 2 + padding}
+          cy={(z - minZ) * pitch + pitch / 2 + padding}
+          r="4.6"
+          fill={definition.color}
+          stroke="rgba(255,255,255,.3)"
+          strokeWidth="1"
+        />
+      ))}
+    </svg>
+  );
 }
 
 function centeredStoragePosition(definition: PieceDefinition, slot: Point3): Point3 {
@@ -133,7 +176,20 @@ function anchorToWorld(anchor: GridCell): THREE.Vector3 {
   );
 }
 
-function storageBoundsFor([x, , z]: Point3) {
+function storageBoundsFor([x, , z]: Point3, layoutMode: LayoutMode) {
+  if (layoutMode === "LANDSCAPE_TABLET_DESKTOP") {
+    const leftWing = x < 0;
+    const outerColumn = Math.abs(x) > 9.8;
+    const horizontal = leftWing
+      ? outerColumn ? { minX: -13.3, maxX: -9.9 } : { minX: -9.75, maxX: -6.65 }
+      : outerColumn ? { minX: 9.9, maxX: 13.3 } : { minX: 6.65, maxX: 9.75 };
+    const vertical = z < -0.075
+      ? { minZ: -2.8, maxZ: -0.1 }
+      : z < 2.675
+        ? { minZ: -0.05, maxZ: 2.65 }
+        : { minZ: 2.7, maxZ: 5.4 };
+    return { ...horizontal, ...vertical };
+  }
   const localZ = z - SCENE_Z_OFFSET;
   const horizontal = x < -3.1
     ? { minX: -7.4, maxX: -3.2 }
@@ -160,6 +216,7 @@ function clampPieceToStorageSlot(
   storagePosition: Point3,
   flipped: boolean,
   viewport: { minX: number; maxX: number; minZ: number; maxZ: number },
+  layoutMode: LayoutMode,
 ) {
   group.updateMatrixWorld(true);
   const sphereRadius = 0.375;
@@ -172,7 +229,7 @@ function clampPieceToStorageSlot(
       maxZ: Math.max(result.maxZ, world.z + sphereRadius),
     };
   }, { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
-  const storageSlot = storageBoundsFor(storagePosition);
+  const storageSlot = storageBoundsFor(storagePosition, layoutMode);
   const slot = {
     minX: Math.max(storageSlot.minX, viewport.minX),
     maxX: Math.min(storageSlot.maxX, viewport.maxX),
@@ -205,6 +262,7 @@ function Polyomino({
   storagePosition,
   fixedPiece,
   restoredPiece,
+  layoutMode,
   resetToken,
   levelTransitioning,
   unboxOrder,
@@ -215,6 +273,7 @@ function Polyomino({
   clearPiece,
   onPlacementChange,
   onPlacementRemove,
+  onTransformChange,
 }: {
   definition: PieceDefinition;
   gameState: GameState;
@@ -224,6 +283,7 @@ function Polyomino({
   storagePosition: Point3;
   fixedPiece: FixedPiece | null;
   restoredPiece: StoredPiecePlacement | null;
+  layoutMode: LayoutMode;
   resetToken: number;
   levelTransitioning: boolean;
   unboxOrder: number;
@@ -234,6 +294,7 @@ function Polyomino({
   clearPiece: (id: string) => void;
   onPlacementChange: (placement: StoredPiecePlacement) => void;
   onPlacementRemove: (pieceId: PieceId) => void;
+  onTransformChange: (state: PiecePreviewState) => void;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
@@ -248,6 +309,7 @@ function Polyomino({
   const lastStationaryClick = useRef(0);
   const handledRotationRequest = useRef(rotationRequest);
   const handledFlipRequest = useRef(flipRequest);
+  const previousLayoutMode = useRef(layoutMode);
   const dragTarget = useRef(new THREE.Vector3(...storagePosition));
   const motionTarget = useRef<THREE.Vector3 | null>(null);
   const solved = useMemo(() => anchorToWorld(definition.solvedAnchor), [definition.solvedAnchor]);
@@ -297,13 +359,18 @@ function Polyomino({
     snapAnchor.current = null;
     rotation.current = definition.trayRotation;
     flipped.current = false;
+    if (selected) onTransformChange({ id: definition.id, rotation: definition.trayRotation, flipped: false });
     if (group) group.rotation.set(0, definition.trayRotation * (Math.PI / 2), 0);
     if (bodyRef.current) bodyRef.current.scale.x = 1;
-    if (group) gsap.to(group.scale, { x: TRAY_SCALE, y: TRAY_SCALE, z: TRAY_SCALE, duration: 0.2, ease: "power2.out", onUpdate: invalidate });
-    motionTarget.current = tray.clone();
+    if (group) {
+      gsap.killTweensOf([group.position, group.scale]);
+      gsap.to(group.position, { x: tray.x, y: tray.y, z: tray.z, duration: 0.32, ease: "power2.inOut", onUpdate: invalidate });
+      gsap.to(group.scale, { x: TRAY_SCALE, y: TRAY_SCALE, z: TRAY_SCALE, duration: 0.25, ease: "power2.out", onUpdate: invalidate });
+    }
+    motionTarget.current = null;
     onPlacementRemove(definition.id);
     invalidate();
-  }, [definition.id, definition.trayRotation, invalidate, onPlacementRemove, tray]);
+  }, [definition.id, definition.trayRotation, invalidate, onPlacementRemove, onTransformChange, selected, tray]);
 
   useEffect(() => {
     if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
@@ -335,7 +402,7 @@ function Polyomino({
       group.position.add(pivotCorrection);
 
       const isStored = !placed.current && !dragging.current;
-      if (isStored) clampPieceToStorageSlot(group, definition, storagePosition, flipped.current, visibleStorageBounds());
+      if (isStored) clampPieceToStorageSlot(group, definition, storagePosition, flipped.current, visibleStorageBounds(), layoutMode);
 
       let nextAnchor: GridCell | null = null;
       if (placed.current || (dragging.current && snapAnchor.current)) {
@@ -353,6 +420,7 @@ function Polyomino({
         if (nextAnchor) snapAnchor.current = nextAnchor;
       }
       rotation.current = nextRotation;
+      onTransformChange({ id: definition.id, rotation: nextRotation, flipped: flipped.current });
       motionTarget.current = null;
       return true;
     };
@@ -367,7 +435,7 @@ function Polyomino({
         .to(group.rotation, { z: 0, duration: 0.04, ease: "power1.in" });
     }
     invalidate();
-  }, [canPlace, currentCells, definition, fixedPiece, gameState, invalidate, levelTransitioning, onPlacementChange, placePiece, rotationRequest, selected, storagePosition, visibleStorageBounds]);
+  }, [canPlace, currentCells, definition, fixedPiece, gameState, invalidate, layoutMode, levelTransitioning, onPlacementChange, onTransformChange, placePiece, rotationRequest, selected, storagePosition, visibleStorageBounds]);
 
   useEffect(() => {
     if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
@@ -392,7 +460,7 @@ function Polyomino({
     group.position.add(worldPivot.sub(group.localToWorld(nextLocalPivot)));
 
     const isStored = !placed.current && !dragging.current;
-    let valid = !isStored || clampPieceToStorageSlot(group, definition, storagePosition, nextFlipped, visibleStorageBounds());
+    let valid = !isStored || clampPieceToStorageSlot(group, definition, storagePosition, nextFlipped, visibleStorageBounds(), layoutMode);
     let nextAnchor: GridCell | null = null;
     if (valid && (placed.current || (dragging.current && snapAnchor.current))) {
       nextAnchor = worldToAnchor(group.position.x, group.position.z);
@@ -422,9 +490,10 @@ function Polyomino({
       if (nextAnchor) snapAnchor.current = nextAnchor;
     }
     flipped.current = nextFlipped;
+    onTransformChange({ id: definition.id, rotation: rotation.current, flipped: nextFlipped });
     motionTarget.current = null;
     invalidate();
-  }, [canPlace, currentCells, definition, fixedPiece, flipRequest, gameState, invalidate, levelTransitioning, onPlacementChange, placePiece, selected, storagePosition, visibleStorageBounds]);
+  }, [canPlace, currentCells, definition, fixedPiece, flipRequest, gameState, invalidate, layoutMode, levelTransitioning, onPlacementChange, onTransformChange, placePiece, selected, storagePosition, visibleStorageBounds]);
 
   useEffect(() => {
     if (gameState !== "ANIMATING") return;
@@ -485,7 +554,16 @@ function Polyomino({
       invalidate();
     };
 
+    const layoutChanged = previousLayoutMode.current !== layoutMode;
+    previousLayoutMode.current = layoutMode;
     if (!levelTransitioning) {
+      if (layoutChanged && !targetTransform.anchor) {
+        group.rotation.set(0, targetTransform.rotation * (Math.PI / 2), 0);
+        body.scale.x = targetTransform.flipped ? -1 : 1;
+        gsap.to(group.position, { x: targetTransform.position.x, y: targetTransform.position.y, z: targetTransform.position.z, duration: 0.45, ease: "power2.inOut", onUpdate: invalidate });
+        gsap.to(group.scale, { x: TRAY_SCALE, y: TRAY_SCALE, z: TRAY_SCALE, duration: 0.45, ease: "power2.inOut", onUpdate: invalidate });
+        return;
+      }
       applyExactTarget();
       return;
     }
@@ -499,7 +577,7 @@ function Polyomino({
     timeline.to(group.scale, { x: targetTransform.anchor ? 1 : TRAY_SCALE, y: targetTransform.anchor ? 1 : TRAY_SCALE, z: targetTransform.anchor ? 1 : TRAY_SCALE, duration: 0.4, ease: "power2.inOut" }, 0.2);
     timeline.to(group.position, { y: targetTransform.position.y, duration: 0.2, ease: "power2.out" }, 0.55);
     return () => { timeline.kill(); };
-  }, [fixedPiece, gameState, invalidate, levelTransitioning, resetToken, targetTransform]);
+  }, [fixedPiece, gameState, invalidate, layoutMode, levelTransitioning, resetToken, targetTransform]);
 
   useFrame(() => {
     const group = groupRef.current;
@@ -538,15 +616,17 @@ function Polyomino({
   };
 
   const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
-    if (gameState !== "PLAYING" || levelTransitioning || fixedPiece || !groupRef.current) return;
+    if (gameState !== "PLAYING" || fixedPiece || !groupRef.current) return;
     event.stopPropagation();
     event.nativeEvent.preventDefault();
+    cursorCellIndex.current = Number(event.object.userData.cellIndex ?? cursorCellIndex.current);
+    onSelect(definition.id);
+    onTransformChange({ id: definition.id, rotation: rotation.current, flipped: flipped.current });
+    if (levelTransitioning) return;
     const pointerTarget = event.nativeEvent.target as Element;
     pointerTarget.setPointerCapture(event.pointerId);
     (event.target as unknown as CaptureTarget).setPointerCapture(event.pointerId);
-    cursorCellIndex.current = Number(event.object.userData.cellIndex ?? cursorCellIndex.current);
     pointerDownPoint.current = { x: event.nativeEvent.clientX, y: event.nativeEvent.clientY };
-    onSelect(definition.id);
     if (placed.current) clearPiece(definition.id);
     placed.current = false;
     anchor.current = null;
@@ -614,10 +694,12 @@ function Polyomino({
       if (placePiece(definition.id, targetCells)) {
         placed.current = true;
         anchor.current = snapAnchor.current;
-        motionTarget.current = anchorToWorld(snapAnchor.current);
+        const boardTarget = anchorToWorld(snapAnchor.current);
+        motionTarget.current = null;
         onPlacementChange({ pieceId: definition.id, anchor: [snapAnchor.current.column, snapAnchor.current.row], rotation: rotation.current, flipped: flipped.current });
         if (groupRef.current) {
-          gsap.killTweensOf(groupRef.current.scale);
+          gsap.killTweensOf([groupRef.current.position, groupRef.current.scale]);
+          gsap.to(groupRef.current.position, { x: boardTarget.x, y: boardTarget.y, z: boardTarget.z, duration: 0.18, ease: "power2.out", onUpdate: invalidate });
           gsap.to(groupRef.current.scale, { x: 1, y: 1, z: 1, duration: 0.18, ease: "power2.out", onUpdate: invalidate });
         }
         onSelect(null);
@@ -635,7 +717,6 @@ function Polyomino({
       name={`piece-${definition.id}`}
       position={solved.toArray() as [number, number, number]}
       rotation={[0, definition.solvedRotation * (Math.PI / 2), 0]}
-      raycast={fixedPiece || levelTransitioning ? () => null : undefined}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -797,6 +878,7 @@ function Scene({
   onWin,
   onPlacementChange,
   onPlacementRemove,
+  onTransformChange,
 }: {
   gameState: GameState;
   startedAt: number;
@@ -813,6 +895,7 @@ function Scene({
   onWin: () => void;
   onPlacementChange: (placement: StoredPiecePlacement) => void;
   onPlacementRemove: (pieceId: PieceId) => void;
+  onTransformChange: (state: PiecePreviewState) => void;
 }) {
   const { camera, invalidate, size } = useThree();
   const gridRef = useRef<GridMatrix>(emptyGrid());
@@ -821,38 +904,44 @@ function Scene({
   const fixedById = useMemo(() => new Map(level.fixedPieces.map((piece) => [piece.pieceId, piece])), [level.fixedPieces]);
   const restoredById = useMemo(() => new Map(restoredPieces.map((piece) => [piece.pieceId, piece])), [restoredPieces]);
   const availablePieces = useMemo(() => PIECES.filter((piece) => !fixedById.has(piece.id) && !restoredById.has(piece.id)), [fixedById, restoredById]);
+  const aspect = size.width / Math.max(1, size.height);
+  const layoutMode: LayoutMode = aspect >= 1 || size.width >= 768 ? "LANDSCAPE_TABLET_DESKTOP" : "MOBILE_PORTRAIT";
   const storageById = useMemo(() => {
+    const slots = layoutMode === "LANDSCAPE_TABLET_DESKTOP" ? LANDSCAPE_STORAGE_SLOTS : MOBILE_STORAGE_SLOTS;
     return new Map(availablePieces.map((piece, index) => [
       piece.id,
-      centeredStoragePosition(piece, DESKTOP_STORAGE_SLOTS[index]),
+      centeredStoragePosition(piece, slots[index]),
     ]));
-  }, [availablePieces]);
+  }, [availablePieces, layoutMode]);
 
   useEffect(() => {
     if (selectedPiece && fixedById.has(selectedPiece as PieceId)) onSelectPiece(null);
   }, [fixedById, onSelectPiece, selectedPiece]);
   const cameraTargets = useMemo(() => {
-    const aspect = Math.max(0.45, size.width / Math.max(1, size.height));
-    const portrait = aspect < 1;
+    const cameraAspect = Math.max(0.45, size.width / Math.max(1, size.height));
     const halfFov = THREE.MathUtils.degToRad(15);
     const fitDistance = (width: number, height: number) => Math.max(
       height / (2 * Math.tan(halfFov)),
-      width / (2 * Math.tan(halfFov) * aspect),
+      width / (2 * Math.tan(halfFov) * cameraAspect),
     );
-    const menuDistance = fitDistance(12.4, 7.2);
+    const landscapeMenuWidth = 10.15 / 0.58;
+    const menuDistance = layoutMode === "LANDSCAPE_TABLET_DESKTOP"
+      ? fitDistance(landscapeMenuWidth, 9.5)
+      : fitDistance(12.4, 7.2);
     const toolbarReserve = Math.min(0.22, 88 / Math.max(1, size.height));
-    const playFocus = new THREE.Vector3(0, PLAY_FOCUS.y, portrait ? BOARD_ANCHOR[2] + 5.1 : 6.3);
+    const landscape = layoutMode === "LANDSCAPE_TABLET_DESKTOP";
+    const playFocus = new THREE.Vector3(0, PLAY_FOCUS.y, landscape ? BOARD_ANCHOR[2] : BOARD_ANCHOR[2] + 5.1);
     const portraitBoardWidth = 10.15 / 0.8;
     const fullSceneDistance = fitDistance(14.2, 18.2 / (1 - toolbarReserve));
-    const playDistance = portrait
-      ? Math.max(portraitBoardWidth / (2 * Math.tan(halfFov) * aspect), fullSceneDistance)
-      : fullSceneDistance;
+    const playDistance = landscape
+      ? fitDistance(28.5, 8.5 / (1 - toolbarReserve))
+      : Math.max(portraitBoardWidth / (2 * Math.tan(halfFov) * cameraAspect), fullSceneDistance);
     return {
       menu: new THREE.Vector3(0, menuDistance * 0.93, MENU_FOCUS.z + menuDistance * 0.37),
       play: new THREE.Vector3(0, playDistance * 0.985, playFocus.z + playDistance * 0.17),
       playFocus,
     };
-  }, [size.height, size.width]);
+  }, [layoutMode, size.height, size.width]);
 
   const commitGrid = useCallback((nextGrid: GridMatrix) => {
     gridRef.current = nextGrid;
@@ -932,7 +1021,7 @@ function Scene({
 
   return (
     <>
-      <color attach="background" args={["#dcd8ce"]} />
+      <color attach="background" args={["#dcd8d0"]} />
       <ambientLight intensity={0.68} color="#dce7ff" />
       <hemisphereLight args={["#f7f2e9", "#596061", 0.72]} />
       <pointLight position={[0, 7.5, -0.8]} intensity={22} distance={18} decay={2} color="#fff5e8" />
@@ -965,6 +1054,7 @@ function Scene({
           storagePosition={storageById.get(definition.id) ?? definition.trayPosition}
           fixedPiece={fixedById.get(definition.id) ?? null}
           restoredPiece={restoredById.get(definition.id) ?? null}
+          layoutMode={layoutMode}
           resetToken={resetToken}
           levelTransitioning={levelTransitioning}
           unboxOrder={availablePieces.findIndex((piece) => piece.id === definition.id)}
@@ -975,11 +1065,12 @@ function Scene({
           clearPiece={clearPiece}
           onPlacementChange={onPlacementChange}
           onPlacementRemove={onPlacementRemove}
+          onTransformChange={onTransformChange}
         />
       ))}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.32, 3]} receiveShadow raycast={() => null}>
         <planeGeometry args={[42, 36]} />
-        <meshStandardMaterial color="#dcd8ce" roughness={0.92} />
+        <meshStandardMaterial color="#dcd8d0" roughness={0.92} />
       </mesh>
     </>
   );
@@ -989,6 +1080,7 @@ export function PuzzleScene() {
   const [gameState, setGameState] = useState<GameState>("MENU");
   const [startedAt, setStartedAt] = useState(0);
   const [selectedPiece, setSelectedPiece] = useState<string | null>(null);
+  const [piecePreview, setPiecePreview] = useState<PiecePreviewState | null>(null);
   const [rotationRequest, setRotationRequest] = useState(0);
   const [flipRequest, setFlipRequest] = useState(0);
   const [levelIndex, setLevelIndex] = useState(() => {
@@ -1001,12 +1093,29 @@ export function PuzzleScene() {
   const [levelTransitioning, setLevelTransitioning] = useState(false);
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
+  const [dprCap, setDprCap] = useState(1.5);
   const [progress, setProgress] = useState<GameProgress>(loadGameProgress);
   const levelTransitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canvasElement = useRef<HTMLCanvasElement | null>(null);
   const currentLevelId = LEVELS[levelIndex].id;
   const selectedPieceLocked = selectedPiece
     ? LEVELS[levelIndex].fixedPieces.some((piece) => piece.pieceId === selectedPiece)
     : false;
+
+  const selectPiece = useCallback((id: string | null) => {
+    setSelectedPiece(id);
+    if (!id) setPiecePreview(null);
+  }, []);
+
+  useEffect(() => {
+    const updateDprCap = () => {
+      const isTouchDevice = navigator.maxTouchPoints > 0;
+      setDprCap(isTouchDevice || window.innerWidth < 1024 ? 1.5 : 2);
+    };
+    updateDprCap();
+    window.addEventListener("resize", updateDprCap);
+    return () => window.removeEventListener("resize", updateDprCap);
+  }, []);
 
   const updateProgress = useCallback((updater: (previous: GameProgress) => GameProgress) => {
     setProgress((previous) => {
@@ -1030,13 +1139,18 @@ export function PuzzleScene() {
   }, [currentLevelId, updateProgress]);
 
   const removePlacement = useCallback((pieceId: PieceId) => {
-    updateProgress((previous) => ({
-      ...previous,
-      activeBoardState: {
-        ...previous.activeBoardState,
-        [String(currentLevelId)]: (previous.activeBoardState[String(currentLevelId)] ?? []).filter((item) => item.pieceId !== pieceId),
-      },
-    }));
+    updateProgress((previous) => {
+      const levelKey = String(currentLevelId);
+      const placements = previous.activeBoardState[levelKey];
+      if (!placements?.some((item) => item.pieceId === pieceId)) return previous;
+      return {
+        ...previous,
+        activeBoardState: {
+          ...previous.activeBoardState,
+          [levelKey]: placements.filter((item) => item.pieceId !== pieceId),
+        },
+      };
+    });
   }, [currentLevelId, updateProgress]);
 
   const beginLevelTransition = useCallback(() => {
@@ -1045,7 +1159,8 @@ export function PuzzleScene() {
     levelTransitionTimer.current = setTimeout(() => {
       setLevelTransitioning(false);
       levelTransitionTimer.current = null;
-    }, 780);
+      canvasElement.current?.focus({ preventScroll: true });
+    }, LEVEL_TRANSITION_MS);
   }, []);
 
   useEffect(() => () => {
@@ -1062,23 +1177,24 @@ export function PuzzleScene() {
 
   const resetLevel = useCallback(() => {
     beginLevelTransition();
-    setSelectedPiece(null);
+    selectPiece(null);
     setWon(false);
     updateProgress((previous) => ({
       ...previous,
       activeBoardState: { ...previous.activeBoardState, [String(currentLevelId)]: [] },
     }));
     setResetToken((token) => token + 1);
-  }, [beginLevelTransition, currentLevelId, updateProgress]);
+  }, [beginLevelTransition, currentLevelId, selectPiece, updateProgress]);
 
   const selectLevel = useCallback((nextIndex: number) => {
     beginLevelTransition();
     setLevelIndex(nextIndex);
-    setSelectedPiece(null);
+    selectPiece(null);
     setWon(false);
     updateProgress((previous) => ({ ...previous, currentLevel: LEVELS[nextIndex].id }));
     setResetToken((token) => token + 1);
-  }, [beginLevelTransition, updateProgress]);
+    requestAnimationFrame(() => canvasElement.current?.focus({ preventScroll: true }));
+  }, [beginLevelTransition, selectPiece, updateProgress]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1095,15 +1211,23 @@ export function PuzzleScene() {
   }, [requestFlip, requestRotation]);
 
   return (
-    <div className={`webgl-stage${levelTransitioning ? " webgl-stage--transitioning" : ""}`}>
+    <div
+      className={`webgl-stage${levelTransitioning ? " webgl-stage--transitioning" : ""}`}
+      onPointerDownCapture={(event) => {
+        const activeElement = document.activeElement;
+        if (activeElement instanceof HTMLElement && activeElement !== event.target) activeElement.blur();
+      }}
+    >
       <Canvas
         key={canvasKey}
         frameloop="demand"
         shadows={{ type: THREE.PCFSoftShadowMap }}
         camera={{ position: [0, 18, 22], fov: 30, near: 0.1, far: 100 }}
-        dpr={1}
+        dpr={[1, dprCap]}
         gl={{ antialias: true, alpha: false, toneMapping: THREE.ACESFilmicToneMapping }}
         onCreated={({ gl }) => {
+          canvasElement.current = gl.domElement;
+          gl.domElement.tabIndex = 0;
           gl.outputColorSpace = THREE.SRGBColorSpace;
           gl.toneMappingExposure = 1.08;
           gl.domElement.addEventListener("webglcontextlost", (event) => {
@@ -1119,11 +1243,11 @@ export function PuzzleScene() {
           rotationRequest={rotationRequest}
           flipRequest={flipRequest}
           level={LEVELS[levelIndex]}
-          restoredPieces={progress.activeBoardState[String(currentLevelId)] ?? []}
+          restoredPieces={progress.activeBoardState[String(currentLevelId)] ?? EMPTY_STORED_PLACEMENTS}
           resetToken={resetToken}
           won={won}
           levelTransitioning={levelTransitioning}
-          onSelectPiece={setSelectedPiece}
+          onSelectPiece={selectPiece}
           onAnimationComplete={() => setGameState("PLAYING")}
           onWin={() => {
             setWon(true);
@@ -1136,6 +1260,7 @@ export function PuzzleScene() {
           }}
           onPlacementChange={savePlacement}
           onPlacementRemove={removePlacement}
+          onTransformChange={setPiecePreview}
         />
       </Canvas>
 
@@ -1160,8 +1285,8 @@ export function PuzzleScene() {
 
       <div className={`bottom-hud${gameState === "PLAYING" ? " bottom-hud--visible" : ""}`} aria-hidden={gameState !== "PLAYING"}>
         <div className={`piece-tools${gameState === "PLAYING" ? " piece-tools--visible" : ""}`}>
-          <span>Piece {selectedPiece ?? "—"}</span>
-          <button type="button" disabled={!selectedPiece || selectedPieceLocked || levelTransitioning} onClick={requestRotation} aria-label={`Rotate piece ${selectedPiece ?? ""} clockwise`}>↻ Rotate</button>
+          <div className="piece-preview"><PiecePreview state={piecePreview} /></div>
+          <button type="button" disabled={!selectedPiece || selectedPieceLocked || levelTransitioning} onClick={requestRotation} aria-label={`Rotate piece ${selectedPiece ?? ""} counter-clockwise`}>↺ Rotate</button>
           <button type="button" disabled={!selectedPiece || selectedPieceLocked || levelTransitioning} onClick={requestFlip} aria-label={`Flip piece ${selectedPiece ?? ""} horizontally`}>↔ Flip</button>
         </div>
         <p aria-hidden={gameState !== "PLAYING"} className={`play-hint${gameState === "PLAYING" ? " play-hint--visible" : ""}`}>Drag · R/Space rotate · F flip</p>

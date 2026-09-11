@@ -1,16 +1,20 @@
 @import "tailwindcss";
 
-:root { --background: #dcd8ce; --foreground: #171a1b; }
+:root { --background: #dcd8d0; --foreground: #171a1b; }
 * { box-sizing: border-box; }
-html, body, #root { width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; background: #dcd8ce; }
-body { margin: 0; background: var(--background); color: var(--foreground); font-family: Arial, Helvetica, sans-serif; }
+html, body, #root, main { margin: 0; padding: 0; border: 0; }
+html, body, #root { width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; background-color: #dcd8d0; }
+html { position: fixed; inset: 0; color-scheme: light; scrollbar-width: none; }
+body { position: fixed; inset: 0; background: var(--background); color: var(--foreground); font-family: Arial, Helvetica, sans-serif; }
+html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; }
 button, canvas { -webkit-tap-highlight-color: transparent; }
-.game-shell { position: fixed; inset: 0; width: 100vw; height: 100dvh; overflow: hidden; background: #dcd8ce; }
-.scene-frame, .scene-loading { position: absolute; inset: 0; }
+.game-shell { position: fixed; top: 0; right: 0; bottom: -6px; left: 0; overflow: hidden; background: #dcd8d0; }
+.scene-frame, .scene-loading { position: absolute; inset: 0; overflow: hidden; border: 0; }
 .scene-frame, .scene-frame canvas { touch-action: none; user-select: none; -webkit-user-select: none; }
+.scene-frame canvas { display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; outline: none; box-shadow: none; }
 .webgl-stage { position: relative; width: 100%; height: 100%; }
-.webgl-stage--transitioning { pointer-events: none; }
-.webgl-recovery { position: absolute; inset: 0; display: grid; place-content: center; gap: 1rem; padding: 2rem; text-align: center; background: rgba(220,216,206,.94); }
+.webgl-stage--transitioning { cursor: wait; }
+.webgl-recovery { position: absolute; inset: 0; display: grid; place-content: center; gap: 1rem; padding: 2rem; text-align: center; background: rgba(220,216,208,.94); }
 .webgl-recovery p { margin: 0; font-size: 1rem; font-weight: 650; }
 .webgl-recovery button { justify-self: center; border: 0; border-radius: 999px; padding: .75rem 1.1rem; background: #202324; color: white; font: inherit; font-weight: 700; cursor: pointer; }
 .game-start { position: absolute; inset: 0; display: grid; place-items: center; opacity: 1; transition: opacity .45s ease; pointer-events: none; }
@@ -26,13 +30,16 @@ button, canvas { -webkit-tap-highlight-color: transparent; }
 .level-toolbar select { padding: .58rem 1.8rem .58rem .75rem; background: #fff; color: #202324; cursor: pointer; }
 .level-toolbar button { padding: .58rem .8rem; background: #202324; color: #fff; cursor: pointer; }
 .level-toolbar select:focus-visible, .level-toolbar button:focus-visible { outline: 3px solid rgba(255,65,40,.35); outline-offset: 2px; }
-.bottom-hud { position: absolute; z-index: 20; left: 50%; bottom: max(.5rem, env(safe-area-inset-bottom)); width: min(28rem, calc(100% - 2rem)); display: flex; flex-direction: column; align-items: center; gap: .25rem; opacity: 0; transform: translate(-50%, .35rem); text-align: center; transition: opacity .3s ease, transform .3s ease; pointer-events: none; }
+.bottom-hud { position: absolute; z-index: 20; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem); width: min(28rem, calc(100% - 2rem)); margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; align-items: center; gap: .25rem; opacity: 0; transform: translate(-50%, .35rem); text-align: center; transition: opacity .3s ease, transform .3s ease; pointer-events: none; }
 .bottom-hud--visible { opacity: 1; transform: translate(-50%, 0); }
 .play-hint { max-width: 100%; margin: 0; color: rgba(23,26,27,.68); font-size: .75rem; font-weight: 650; letter-spacing: .035em; text-align: center; white-space: normal; opacity: 0; transform: translateY(.25rem); transition: opacity .45s ease, transform .45s ease; pointer-events: none; }
 .play-hint--visible { opacity: 1; transform: translateY(0); }
 .piece-tools { flex: 0 0 auto; display: flex; align-items: center; gap: .75rem; padding: .55rem .6rem .55rem .9rem; border: 1px solid rgba(255,255,255,.45); border-radius: 999px; background: rgba(27,30,31,.88); color: white; box-shadow: 0 .8rem 2.5rem rgba(0,0,0,.2); backdrop-filter: blur(10px); opacity: 0; transform: translateY(.5rem); transition: opacity .25s ease, transform .25s ease; pointer-events: none; }
 .piece-tools--visible { opacity: 1; transform: translateY(0); pointer-events: none; }
 .piece-tools span { font-size: .75rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.piece-preview { flex: 0 0 5rem; width: 5rem; height: 2.35rem; display: grid; place-items: center; overflow: hidden; }
+.piece-preview__svg { display: block; width: 100%; height: 100%; max-width: 100%; max-height: 100%; overflow: hidden; filter: drop-shadow(0 1px 1px rgba(0,0,0,.25)); }
+.piece-preview .piece-preview__empty { max-width: 4.8rem; color: rgba(255,255,255,.48); font-size: .55rem; line-height: 1.15; letter-spacing: .07em; text-align: center; }
 .piece-tools button { pointer-events: none; border: 0; border-radius: 999px; padding: .55rem .8rem; background: #ff4128; color: white; font: inherit; font-size: .8rem; font-weight: 750; cursor: pointer; }
 .piece-tools--visible button { pointer-events: auto; }
 .piece-tools button:disabled { cursor: default; opacity: .42; }
@@ -44,9 +51,9 @@ button, canvas { -webkit-tap-highlight-color: transparent; }
 .victory-card h2 { margin: 0 0 1.25rem; font-size: clamp(1.7rem,5vw,2.35rem); letter-spacing: -.04em; }
 .victory-card button { border: 0; border-radius: 999px; padding: .8rem 1.2rem; background: #ff4128; color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
 @keyframes victory-in { from { opacity: 0; transform: translateY(.75rem) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
-.scene-loading { background: radial-gradient(circle at 50% 47%, rgba(255,255,255,.95), transparent 28%), #dcd8ce; }
+.scene-loading { background: radial-gradient(circle at 50% 47%, rgba(255,255,255,.95), transparent 28%), #dcd8d0; }
 .game-mark { position: absolute; top: max(1.25rem, env(safe-area-inset-top)); left: 1.5rem; display: flex; align-items: center; gap: .65rem; color: #1b1d1e; font-size: .82rem; font-weight: 750; letter-spacing: .16em; text-transform: uppercase; pointer-events: none; }
 .game-mark__dot { width: .8rem; height: .8rem; border-radius: 999px; background: #ff3c24; box-shadow: 0 0 0 .28rem rgba(255,60,36,.15); }
 @media (max-width: 640px) { .game-mark { left: .75rem; font-size: .68rem; } .level-toolbar { right: .75rem; padding-left: .6rem; } .level-toolbar label { display: none; } .level-toolbar select, .level-toolbar button { font-size: .7rem; } .bottom-hud { width: calc(100% - 1.5rem); } .play-hint { font-size: .6rem; letter-spacing: 0; } .piece-tools { gap: .35rem; padding: .42rem .45rem .42rem .65rem; } .piece-tools span { font-size: .66rem; } .piece-tools button { padding: .46rem .58rem; font-size: .72rem; } }
-@media (hover: none), (pointer: coarse) { .bottom-hud { bottom: max(12px, env(safe-area-inset-bottom)); } }
+@media (hover: none), (pointer: coarse) { .bottom-hud { bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem); } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
