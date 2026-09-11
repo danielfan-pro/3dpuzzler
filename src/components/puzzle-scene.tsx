@@ -75,6 +75,20 @@ const LANDSCAPE_STORAGE_SLOTS: readonly Point3[] = [
   [8.25, REST_Y, 4.05], [11.55, REST_Y, 4.05],
 ];
 
+const RIGHT_FIRST_LANDSCAPE_STORAGE_SLOTS: readonly Point3[] = [
+  ...LANDSCAPE_STORAGE_SLOTS.slice(6),
+  ...LANDSCAPE_STORAGE_SLOTS.slice(0, 6),
+];
+
+const NATIVE_RIGHT_STORAGE_SLOTS: readonly Point3[] = [
+  [8.25, REST_Y, -1.45], [11.55, REST_Y, -1.45],
+  [8.25, REST_Y, 1.3], [11.55, REST_Y, 1.3],
+  [8.25, REST_Y, 4.05], [11.55, REST_Y, 4.05],
+  [15.35, REST_Y, -1.45], [18.65, REST_Y, -1.45],
+  [15.35, REST_Y, 1.3], [18.65, REST_Y, 1.3],
+  [15.35, REST_Y, 4.05], [18.65, REST_Y, 4.05],
+];
+
 const PIECES: readonly PieceDefinition[] = [
   { id: "A", color: "#ff3b30", cells: [[0, 0], [1, 0], [2, 0], [3, 0], [3, 1]], solvedAnchor: { column: 3, row: 4 }, solvedRotation: 2, trayPosition: [-7.2, REST_Y, 5], trayRotation: 0 },
   { id: "B", color: "#ee9b22", cells: [[0, 0], [1, 0], [2, 0], [1, -1], [0, 1]], solvedAnchor: { column: 5, row: 2 }, solvedRotation: 3, trayPosition: [-7.2, REST_Y, 9], trayRotation: 0 },
@@ -203,6 +217,15 @@ function anchorToWorld(anchor: GridCell): THREE.Vector3 {
 
 function storageBoundsFor([x, , z]: Point3, layoutMode: LayoutMode) {
   if (layoutMode === "LANDSCAPE_TABLET_DESKTOP") {
+    const nativeRightGrid = x > 13.3;
+    if (nativeRightGrid) {
+      return {
+        minX: x - 1.55,
+        maxX: x + 1.55,
+        minZ: z - 1.35,
+        maxZ: z + 1.35,
+      };
+    }
     const leftWing = x < 0;
     const outerColumn = Math.abs(x) > 9.8;
     const horizontal = leftWing
@@ -341,6 +364,7 @@ function Polyomino({
   const handledFlipRequest = useRef(flipRequest);
   const previousLayoutMode = useRef(layoutMode);
   const preserveTrayTransform = useRef(false);
+  const [storedTransform, setStoredTransform] = useState({ resetToken, rotation: definition.trayRotation, flipped: false });
   const dragTarget = useRef(new THREE.Vector3(...storagePosition));
   const motionTarget = useRef<THREE.Vector3 | null>(null);
   const solved = useMemo(() => anchorToWorld(definition.solvedAnchor), [definition.solvedAnchor]);
@@ -354,8 +378,21 @@ function Polyomino({
       const targetAnchor = { column: restoredPiece.anchor[0], row: restoredPiece.anchor[1] };
       return { position: anchorToWorld(targetAnchor), rotation: restoredPiece.rotation, flipped: restoredPiece.flipped, anchor: targetAnchor };
     }
-    return { position: tray, rotation: definition.trayRotation, flipped: false, anchor: null };
-  }, [definition, fixedPiece, restoredPiece, tray]);
+    const currentStoredTransform = storedTransform.resetToken === resetToken
+      ? storedTransform
+      : { rotation: definition.trayRotation, flipped: false };
+    return {
+      position: storagePositionForTransform(
+        definition,
+        tray,
+        currentStoredTransform.rotation,
+        currentStoredTransform.flipped,
+      ),
+      rotation: currentStoredTransform.rotation,
+      flipped: currentStoredTransform.flipped,
+      anchor: null,
+    };
+  }, [definition, fixedPiece, resetToken, restoredPiece, storedTransform, tray]);
   const hitArea = useMemo(() => {
     const xs = definition.cells.map(([x]) => x * GRID_CELL_SIZE_X);
     const zs = definition.cells.map(([, z]) => z * GRID_CELL_SIZE_Z);
@@ -414,6 +451,11 @@ function Polyomino({
       if (group) group.rotation.set(0, definition.trayRotation * (Math.PI / 2), 0);
       if (bodyRef.current) bodyRef.current.scale.x = 1;
     }
+    setStoredTransform({
+      resetToken,
+      rotation: rotation.current,
+      flipped: flipped.current,
+    });
     const trayTarget = storagePositionForTransform(definition, tray, rotation.current, flipped.current);
     if (selected) onTransformChange({ id: definition.id, rotation: rotation.current, flipped: flipped.current });
     if (group) {
@@ -428,7 +470,7 @@ function Polyomino({
     motionTarget.current = null;
     onPlacementRemove(definition.id);
     invalidate();
-  }, [definition, invalidate, onPlacementRemove, onTransformChange, restoredPiece, selected, tray]);
+  }, [definition, invalidate, onPlacementRemove, onTransformChange, resetToken, restoredPiece, selected, tray]);
 
   useEffect(() => {
     if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
@@ -478,6 +520,7 @@ function Polyomino({
         if (nextAnchor) snapAnchor.current = nextAnchor;
       }
       rotation.current = nextRotation;
+      setStoredTransform({ resetToken, rotation: nextRotation, flipped: flipped.current });
       onTransformChange({ id: definition.id, rotation: nextRotation, flipped: flipped.current });
       motionTarget.current = null;
       return true;
@@ -493,7 +536,7 @@ function Polyomino({
         .to(group.rotation, { z: 0, duration: 0.04, ease: "power1.in" });
     }
     invalidate();
-  }, [canPlace, currentCells, definition, fixedPiece, gameState, invalidate, layoutMode, levelTransitioning, onPlacementChange, onTransformChange, placePiece, rotationRequest, selected, storagePosition, visibleStorageBounds]);
+  }, [canPlace, currentCells, definition, fixedPiece, gameState, invalidate, layoutMode, levelTransitioning, onPlacementChange, onTransformChange, placePiece, resetToken, rotationRequest, selected, storagePosition, visibleStorageBounds]);
 
   useEffect(() => {
     if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
@@ -548,10 +591,11 @@ function Polyomino({
       if (nextAnchor) snapAnchor.current = nextAnchor;
     }
     flipped.current = nextFlipped;
+    setStoredTransform({ resetToken, rotation: rotation.current, flipped: nextFlipped });
     onTransformChange({ id: definition.id, rotation: rotation.current, flipped: nextFlipped });
     motionTarget.current = null;
     invalidate();
-  }, [canPlace, currentCells, definition, fixedPiece, flipRequest, gameState, invalidate, layoutMode, levelTransitioning, onPlacementChange, onTransformChange, placePiece, selected, storagePosition, visibleStorageBounds]);
+  }, [canPlace, currentCells, definition, fixedPiece, flipRequest, gameState, invalidate, layoutMode, levelTransitioning, onPlacementChange, onTransformChange, placePiece, resetToken, selected, storagePosition, visibleStorageBounds]);
 
   useEffect(() => {
     if (gameState !== "ANIMATING") return;
@@ -1027,16 +1071,22 @@ function Scene({
   const restoredById = useMemo(() => new Map(restoredPieces.map((piece) => [piece.pieceId, piece])), [restoredPieces]);
   const availablePieces = useMemo(() => PIECES.filter((piece) => !fixedById.has(piece.id) && !restoredById.has(piece.id)), [fixedById, restoredById]);
   const aspect = size.width / Math.max(1, size.height);
-  const layoutMode: LayoutMode = Capacitor.isNativePlatform() || aspect >= 1 || size.width >= 768
+  const nativePlatform = Capacitor.isNativePlatform();
+  const layoutMode: LayoutMode = nativePlatform || aspect >= 1 || size.width >= 768
     ? "LANDSCAPE_TABLET_DESKTOP"
     : "MOBILE_PORTRAIT";
   const storageById = useMemo(() => {
-    const slots = layoutMode === "LANDSCAPE_TABLET_DESKTOP" ? LANDSCAPE_STORAGE_SLOTS : MOBILE_STORAGE_SLOTS;
-    return new Map(availablePieces.map((piece, index) => [
+    const slots = layoutMode === "LANDSCAPE_TABLET_DESKTOP"
+      ? nativePlatform ? NATIVE_RIGHT_STORAGE_SLOTS : RIGHT_FIRST_LANDSCAPE_STORAGE_SLOTS
+      : MOBILE_STORAGE_SLOTS;
+    // Keep every piece tied to its own storage slot. Compacting this list when
+    // another piece moves to the board makes all remaining tray pieces jump,
+    // and can visually undo rotations/flips that the player already chose.
+    return new Map(PIECES.map((piece, index) => [
       piece.id,
       centeredStoragePosition(piece, slots[index]),
     ]));
-  }, [availablePieces, layoutMode]);
+  }, [layoutMode, nativePlatform]);
 
   useEffect(() => {
     if (selectedPiece && fixedById.has(selectedPiece as PieceId)) onSelectPiece(null);
@@ -1054,18 +1104,19 @@ function Scene({
       : fitDistance(12.4, 7.2);
     const toolbarReserve = Math.min(0.22, 88 / Math.max(1, size.height));
     const landscape = layoutMode === "LANDSCAPE_TABLET_DESKTOP";
-    const playFocus = new THREE.Vector3(0, PLAY_FOCUS.y, landscape ? BOARD_ANCHOR[2] : BOARD_ANCHOR[2] + 5.1);
+    const nativePlayCenterX = nativePlatform && landscape ? 7.05 : 0;
+    const playFocus = new THREE.Vector3(nativePlayCenterX, PLAY_FOCUS.y, landscape ? BOARD_ANCHOR[2] : BOARD_ANCHOR[2] + 5.1);
     const portraitBoardWidth = 10.15 / 0.8;
     const fullSceneDistance = fitDistance(14.2, 18.2 / (1 - toolbarReserve));
     const playDistance = landscape
-      ? fitDistance(28.5, 8.5 / (1 - toolbarReserve))
+      ? fitDistance(nativePlatform ? 29.75 : 28.5, 8.5 / (1 - toolbarReserve))
       : Math.max(portraitBoardWidth / (2 * Math.tan(halfFov) * cameraAspect), fullSceneDistance);
     return {
       menu: new THREE.Vector3(0, menuDistance * 0.93, MENU_FOCUS.z + menuDistance * 0.37),
-      play: new THREE.Vector3(0, playDistance * 0.985, playFocus.z + playDistance * 0.17),
+      play: new THREE.Vector3(nativePlayCenterX, playDistance * 0.985, nativePlatform ? playFocus.z : playFocus.z + playDistance * 0.17),
       playFocus,
     };
-  }, [layoutMode, size.height, size.width]);
+  }, [layoutMode, nativePlatform, size.height, size.width]);
 
   const commitGrid = useCallback((nextGrid: GridMatrix) => {
     gridRef.current = nextGrid;
@@ -1120,6 +1171,7 @@ function Scene({
   }, [commitGrid, fixedById, level.fixedPieces, resetToken, restoredPieces]);
 
   useFrame(() => {
+    camera.up.set(0, nativePlatform ? 0 : 1, nativePlatform ? -1 : 0);
     if (gameState === "MENU") {
       completionSent.current = false;
       camera.position.copy(cameraTargets.menu);
@@ -1194,7 +1246,7 @@ function Scene({
         />
       ))}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.32, 3]} receiveShadow raycast={() => null}>
-        <planeGeometry args={[42, 36]} />
+        <planeGeometry args={[72, 52]} />
         <meshStandardMaterial color="#dcd8d0" roughness={0.92} />
       </mesh>
     </>
