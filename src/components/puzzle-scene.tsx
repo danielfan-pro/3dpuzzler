@@ -57,9 +57,9 @@ const LEVEL_TRANSITION_MS = 750;
 const EMPTY_STORED_PLACEMENTS: readonly StoredPiecePlacement[] = [];
 
 const MOBILE_STORAGE_SLOTS: readonly Point3[] = [
-  [-4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]], [-1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]], [1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]], [4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]],
-  [-4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE], [-1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE], [1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE], [4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE],
-  [-4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2], [-1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2], [1.58, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2], [4.75, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2],
+  [-4.35, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]], [-1.45, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]], [1.45, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]], [4.35, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2]],
+  [-4.35, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE], [-1.45, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE], [1.45, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE], [4.35, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE],
+  [-4.35, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2], [-1.45, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2], [1.45, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2], [4.35, STORAGE_GRID_ANCHOR[1], STORAGE_GRID_ANCHOR[2] + STORAGE_ROW_STRIDE * 2],
 ];
 
 const LANDSCAPE_STORAGE_SLOTS: readonly Point3[] = [
@@ -191,13 +191,13 @@ function storageBoundsFor([x, , z]: Point3, layoutMode: LayoutMode) {
     return { ...horizontal, ...vertical };
   }
   const localZ = z - SCENE_Z_OFFSET;
-  const horizontal = x < -3.1
-    ? { minX: -7.4, maxX: -3.2 }
+  const horizontal = x < -2.9
+    ? { minX: -5.78, maxX: -2.92 }
     : x < 0
-      ? { minX: -3.05, maxX: -0.1 }
-      : x < 3.1
-        ? { minX: 0.1, maxX: 3.05 }
-        : { minX: 3.2, maxX: 7.4 };
+      ? { minX: -2.88, maxX: -0.02 }
+      : x < 2.9
+        ? { minX: 0.02, maxX: 2.88 }
+        : { minX: 2.92, maxX: 5.78 };
   const vertical = localZ < 7.95
     ? { minZ: 5.35, maxZ: 7.9 }
     : localZ < 10.35
@@ -219,7 +219,8 @@ function clampPieceToStorageSlot(
   layoutMode: LayoutMode,
 ) {
   group.updateMatrixWorld(true);
-  const sphereRadius = 0.375;
+  const worldScale = group.getWorldScale(new THREE.Vector3());
+  const sphereRadius = 0.375 * Math.max(Math.abs(worldScale.x), Math.abs(worldScale.z));
   const bounds = definition.cells.reduce((result, [x, z]) => {
     const world = group.localToWorld(new THREE.Vector3((flipped ? -x : x) * GRID_CELL_SIZE_X, 0, z * GRID_CELL_SIZE_Z));
     return {
@@ -299,6 +300,8 @@ function Polyomino({
   const groupRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
   const dragging = useRef(false);
+  const pointerActive = useRef(false);
+  const pointerStartedPlaced = useRef(false);
   const placed = useRef(false);
   const rotation = useRef(definition.trayRotation);
   const flipped = useRef(false);
@@ -333,14 +336,14 @@ function Polyomino({
     const maxX = Math.max(...xs);
     const minZ = Math.min(...zs);
     const maxZ = Math.max(...zs);
-    const padding = 0.22;
+    const padding = layoutMode === "MOBILE_PORTRAIT" ? 0.03 : 0.22;
     return {
       centerX: (minX + maxX) / 2,
       centerZ: (minZ + maxZ) / 2,
       width: maxX - minX + 0.75 + padding * 2,
       depth: maxZ - minZ + 0.75 + padding * 2,
     };
-  }, [definition.cells]);
+  }, [definition.cells, layoutMode]);
   const { camera, gl, invalidate } = useThree();
 
   const currentCells = useCallback((targetAnchor: GridCell, targetRotation = rotation.current, targetFlipped = flipped.current) => (
@@ -369,11 +372,15 @@ function Polyomino({
 
   const resetToTray = useCallback((resetTransform = false) => {
     const group = groupRef.current;
+    const wasPlaced = placed.current;
     dragging.current = false;
     placed.current = false;
     anchor.current = null;
     snapAnchor.current = null;
-    preserveTrayTransform.current = !resetTransform && Boolean(restoredPiece);
+    // Removing the persisted board placement rerenders this piece immediately.
+    // Keep its current world transform so that rerender does not snap it to the
+    // tray before the return tween can run (including intentional resets).
+    preserveTrayTransform.current = Boolean(restoredPiece) || wasPlaced;
     if (resetTransform) {
       rotation.current = definition.trayRotation;
       flipped.current = false;
@@ -655,23 +662,32 @@ function Polyomino({
     pointerTarget.setPointerCapture(event.pointerId);
     (event.target as unknown as CaptureTarget).setPointerCapture(event.pointerId);
     pointerDownPoint.current = { x: event.nativeEvent.clientX, y: event.nativeEvent.clientY };
-    if (placed.current) clearPiece(definition.id);
-    placed.current = false;
-    anchor.current = null;
+    pointerActive.current = true;
+    pointerStartedPlaced.current = placed.current;
     snapAnchor.current = null;
     motionTarget.current = null;
-    dragging.current = true;
-    gsap.killTweensOf(groupRef.current.scale);
-    gsap.to(groupRef.current.scale, { x: 1, y: 1, z: 1, duration: 0.18, ease: "power2.out", onUpdate: invalidate });
-    dragTarget.current.copy(groupRef.current.position).setY(LIFT_Y);
     invalidate();
   };
 
   const handlePointerMove = (event: ThreeEvent<PointerEvent>) => {
     cursorCellIndex.current = Number(event.object.userData.cellIndex ?? cursorCellIndex.current);
-    if (!dragging.current) return;
+    if (!pointerActive.current) return;
     event.stopPropagation();
     event.nativeEvent.preventDefault();
+    if (!dragging.current) {
+      const deltaX = event.nativeEvent.clientX - pointerDownPoint.current.x;
+      const deltaY = event.nativeEvent.clientY - pointerDownPoint.current.y;
+      if (Math.hypot(deltaX, deltaY) < 4) return;
+      if (pointerStartedPlaced.current) clearPiece(definition.id);
+      placed.current = false;
+      anchor.current = null;
+      dragging.current = true;
+      if (groupRef.current) {
+        gsap.killTweensOf(groupRef.current.scale);
+        gsap.to(groupRef.current.scale, { x: 1, y: 1, z: 1, duration: 0.18, ease: "power2.out", onUpdate: invalidate });
+        dragTarget.current.copy(groupRef.current.position).setY(LIFT_Y);
+      }
+    }
     const hit = intersectDragPlane(event);
     if (!hit) return;
     const candidateAnchor = worldToAnchor(hit.x, hit.z);
@@ -698,24 +714,35 @@ function Polyomino({
   };
 
   const handlePointerUp = (event: ThreeEvent<PointerEvent>) => {
-    if (!dragging.current) return;
+    if (!pointerActive.current) return;
     event.stopPropagation();
     const pointerTarget = event.nativeEvent.target as Element;
     if (pointerTarget.hasPointerCapture(event.pointerId)) pointerTarget.releasePointerCapture(event.pointerId);
     const raycastTarget = event.target as unknown as CaptureTarget;
     if (raycastTarget.hasPointerCapture(event.pointerId)) raycastTarget.releasePointerCapture(event.pointerId);
-    dragging.current = false;
+    pointerActive.current = false;
 
-    const stationary = event.nativeEvent.clientX === pointerDownPoint.current.x
-      && event.nativeEvent.clientY === pointerDownPoint.current.y;
+    const stationary = Math.hypot(
+      event.nativeEvent.clientX - pointerDownPoint.current.x,
+      event.nativeEvent.clientY - pointerDownPoint.current.y,
+    ) < 4;
     const now = performance.now();
     const intentionalReset = stationary && now - lastStationaryClick.current <= 200;
     lastStationaryClick.current = stationary ? now : 0;
     if (intentionalReset) {
+      dragging.current = false;
       clearPiece(definition.id);
       resetToTray(true);
       return;
     }
+
+    if (!dragging.current) {
+      // A tap/click selects the piece without changing its board placement.
+      invalidate();
+      return;
+    }
+
+    dragging.current = false;
 
     if (snapAnchor.current) {
       const targetCells = currentCells(snapAnchor.current);
@@ -730,7 +757,6 @@ function Polyomino({
           gsap.to(groupRef.current.position, { x: boardTarget.x, y: boardTarget.y, z: boardTarget.z, duration: 0.18, ease: "power2.out", onUpdate: invalidate });
           gsap.to(groupRef.current.scale, { x: 1, y: 1, z: 1, duration: 0.18, ease: "power2.out", onUpdate: invalidate });
         }
-        onSelect(null);
       }
     }
 
@@ -1324,7 +1350,11 @@ export function PuzzleScene() {
             onClick={() => setLevelMenuOpen((open) => !open)}
           >
             <span>{progress.completedLevels.includes(currentLevelId) ? "✓ " : ""}{LEVELS[levelIndex].name}</span>
-            <span className="level-picker__chevron" aria-hidden="true">⌄</span>
+            <span className="level-picker__chevron" aria-hidden="true">
+              <svg viewBox="0 0 12 8" focusable="false">
+                <path d="M1 1.25 6 6.5l5-5.25" />
+              </svg>
+            </span>
           </button>
           {levelMenuOpen && (
             <div className="level-picker__menu" role="listbox" aria-label="Challenge level">
@@ -1353,7 +1383,15 @@ export function PuzzleScene() {
           <button type="button" disabled={!selectedPiece || selectedPieceLocked || levelTransitioning} onClick={requestRotation} aria-label={`Rotate piece ${selectedPiece ?? ""} counter-clockwise`}>↺ Rotate</button>
           <button type="button" disabled={!selectedPiece || selectedPieceLocked || levelTransitioning} onClick={requestFlip} aria-label={`Flip piece ${selectedPiece ?? ""} horizontally`}>↔ Flip</button>
         </div>
-        <p aria-hidden={gameState !== "PLAYING"} className={`play-hint${gameState === "PLAYING" ? " play-hint--visible" : ""}`}>Drag · R/Space rotate · F flip</p>
+        <p aria-hidden={gameState !== "PLAYING"} className={`play-hint${gameState === "PLAYING" ? " play-hint--visible" : ""}`}>
+          <span className="play-hint__key">Drag</span><span>move</span>
+          <span className="play-hint__separator">·</span>
+          <span className="play-hint__key">R / Space</span><span>rotate</span>
+          <span className="play-hint__separator">·</span>
+          <span className="play-hint__key">F</span><span>flip</span>
+          <span className="play-hint__separator">·</span>
+          <span className="play-hint__key">Double-click / double-tap</span><span>reset</span>
+        </p>
       </div>
 
       {won && (
