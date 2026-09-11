@@ -43,9 +43,28 @@ button, canvas { -webkit-tap-highlight-color: transparent; }
 .level-picker__option:hover, .level-picker__option[aria-selected="true"] { background: linear-gradient(145deg, rgba(255,255,255,.58), rgba(255,65,40,.12)); }
 .level-picker__check { width: .8rem; color: #ff4128; font-weight: 900; }
 .level-toolbar__reset { padding: .58rem .8rem; border: 1px solid rgba(255,59,48,.16); border-radius: 999px; background: rgba(255,59,48,.12); color: #ff3b30; font-weight: 600; box-shadow: none !important; -webkit-backdrop-filter: blur(16px) saturate(155%); backdrop-filter: blur(16px) saturate(155%); transition: transform .16s ease, background .2s ease; }
+.level-toolbar__hint { min-width: 4.35rem; display: flex; align-items: center; justify-content: center; gap: .42rem; padding: .45rem .48rem .45rem .72rem; border-radius: 999px; background: #007aff; color: #fff; box-shadow: none !important; transition: transform .16s ease, filter .2s ease; }
+.level-toolbar__hint--empty { min-width: 6rem; background: rgba(0,0,0,.08); color: #1c1c1e; border: 1px solid rgba(0,0,0,.08); }
+.level-toolbar__hint--empty::after { content: "＋"; color: #007aff; font-size: .9rem; font-weight: 800; }
+.level-toolbar__hint-count { min-width: 1.35rem; height: 1.35rem; display: grid; place-items: center; padding: 0 .28rem; border-radius: 999px; background: rgba(255,255,255,.22); color: #fff; font-size: .68rem; font-weight: 800; line-height: 1; }
 .level-picker__trigger:active, .level-toolbar__reset:active { transform: scale(.97); }
 .level-toolbar__reset:active { transform: scale(.98); background: rgba(255,59,48,.22); }
+.level-toolbar__hint:active { transform: scale(.97); filter: brightness(1.08); }
 @media (hover: hover) { .level-toolbar__reset:hover { transform: scale(.98); background: rgba(255,59,48,.22); } }
+.hint-toast { position: absolute; z-index: 30; top: calc(max(1.25rem, env(safe-area-inset-top)) + 3.65rem); right: 1.5rem; max-width: min(24rem, calc(100% - 3rem)); min-height: 2.75rem; display: flex; align-items: center; gap: .55rem; padding: .42rem .85rem .42rem .55rem; border: 1px solid rgba(255,255,255,.3); border-radius: 999px; background: rgba(250,248,243,.78); color: #202324; box-shadow: 0 12px 32px rgba(0,0,0,.08); -webkit-backdrop-filter: blur(18px) saturate(170%); backdrop-filter: blur(18px) saturate(170%); font-size: .72rem; font-weight: 700; text-align: left; pointer-events: none; animation: hint-toast-in .22s ease-out both; }
+.hint-toast__preview { width: 3.2rem; height: 2rem; flex: 0 0 3.2rem; display: grid; place-items: center; }
+.hint-toast__preview .piece-preview__svg { width: 100%; height: 100%; }
+@keyframes hint-toast-in { from { opacity: 0; transform: translateY(-.3rem); } to { opacity: 1; transform: translateY(0); } }
+.hint-refill-overlay { position: absolute; inset: 0; z-index: 110; display: grid; place-items: center; padding: 1.5rem; background: rgba(28,29,29,.28); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }
+.hint-refill-card { width: min(24rem, 100%); padding: 1.65rem; border: 1px solid rgba(255,255,255,.45); border-radius: 1.5rem; background: rgba(250,248,243,.92); color: #202324; text-align: center; box-shadow: 0 18px 48px rgba(0,0,0,.16); -webkit-backdrop-filter: blur(24px) saturate(170%); backdrop-filter: blur(24px) saturate(170%); animation: victory-in .3s cubic-bezier(.2,.8,.2,1) both; }
+.hint-refill-card__icon { color: #007aff; font-size: 1.7rem; }
+.hint-refill-card__eyebrow { margin: .45rem 0 .2rem; color: rgba(23,26,27,.55); font-size: .68rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+.hint-refill-card h2 { margin: 0; font-size: 1.55rem; }
+.hint-refill-card > p:not(.hint-refill-card__eyebrow) { margin: .65rem auto 1.25rem; max-width: 18rem; color: rgba(23,26,27,.66); font-size: .86rem; line-height: 1.4; }
+.hint-refill-card__actions { display: flex; justify-content: center; gap: .6rem; }
+.hint-refill-card__actions button { border: 0; border-radius: 999px; padding: .7rem 1rem; font: inherit; font-size: .8rem; font-weight: 750; cursor: pointer; box-shadow: none; }
+.hint-refill-card__cancel { background: rgba(0,0,0,.07); color: #202324; }
+.hint-refill-card__refill { background: #007aff; color: #fff; }
 .bottom-hud { position: absolute; z-index: 20; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem); width: min(28rem, calc(100% - 2rem)); margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; align-items: center; gap: .25rem; opacity: 0; transform: translate(-50%, .35rem); text-align: center; transition: opacity .3s ease, transform .3s ease; pointer-events: none; }
 .bottom-hud--visible { opacity: 1; transform: translate(-50%, 0); }
 .play-hint { max-width: 100%; margin: 0; color: rgba(23,26,27,.62); font-size: .75rem; font-weight: 650; letter-spacing: .025em; text-align: center; white-space: normal; opacity: 0; transform: translateY(.25rem); transition: opacity .45s ease, transform .45s ease; pointer-events: none; }
@@ -70,12 +89,14 @@ button, canvas { -webkit-tap-highlight-color: transparent; }
 .victory-card__spark { display: block; color: #ff4128; font-size: 2rem; }
 .victory-card__eyebrow { margin: .6rem 0 .25rem; color: rgba(23,26,27,.58); font-size: .7rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .victory-card h2 { margin: 0 0 1.25rem; font-size: clamp(1.7rem,5vw,2.35rem); letter-spacing: -.04em; }
+.victory-card__reward { display: flex; align-items: center; justify-content: center; gap: .45rem; margin: -.35rem auto 1.15rem; padding: .55rem .8rem; border: 1px solid rgba(0,122,255,.16); border-radius: .85rem; background: rgba(0,122,255,.08); color: #33404b; font-size: .76rem; line-height: 1.25; }
+.victory-card__reward > span:first-child, .victory-card__reward strong { color: #007aff; }
 .victory-card button { border: 0; border-radius: 999px; padding: .8rem 1.2rem; background: #ff4128; color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
 @keyframes victory-in { from { opacity: 0; transform: translateY(.75rem) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .scene-loading { background: radial-gradient(circle at 50% 47%, rgba(255,255,255,.95), transparent 28%), #dcd8d0; }
 .game-mark { position: absolute; top: max(1.25rem, env(safe-area-inset-top)); left: 1.5rem; display: flex; align-items: center; gap: .65rem; color: #1b1d1e; font-size: .82rem; font-weight: 750; letter-spacing: .16em; text-transform: uppercase; pointer-events: none; }
 .game-mark__dot { width: .8rem; height: .8rem; border-radius: 999px; background: #ff3c24; box-shadow: 0 0 0 .28rem rgba(255,60,36,.15); }
-@media (max-width: 640px) { .game-mark { left: .75rem; font-size: .68rem; } .level-toolbar { right: .75rem; padding-left: .6rem; } .level-toolbar__label { display: none; } .level-toolbar button { font-size: .7rem; } .level-picker__trigger { min-width: 5.8rem; } .level-picker__menu { width: 8.6rem; } .bottom-hud { width: calc(100% - 1.5rem); } .play-hint { font-size: .6rem; letter-spacing: 0; } .piece-tools { gap: .35rem; padding: .42rem .45rem .42rem .65rem; } .piece-tools span { font-size: .66rem; } .piece-tools button { padding: .46rem .58rem; font-size: .72rem; } }
+@media (max-width: 640px) { .game-mark { left: .75rem; font-size: .68rem; } .level-toolbar { right: .75rem; padding-left: .6rem; } .level-toolbar__label { display: none; } .level-toolbar button { font-size: .7rem; } .level-picker__trigger { min-width: 5.8rem; } .level-picker__menu { width: 8.6rem; } .hint-toast { right: .75rem; max-width: calc(100% - 1.5rem); } .bottom-hud { width: calc(100% - 1.5rem); } .play-hint { font-size: .6rem; letter-spacing: 0; } .piece-tools { gap: .35rem; padding: .42rem .45rem .42rem .65rem; } .piece-tools span { font-size: .66rem; } .piece-tools button { padding: .46rem .58rem; font-size: .72rem; } }
 @media (hover: none), (pointer: coarse) { .bottom-hud { bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem); } .play-hint .play-hint__desktop-only { display: none; } .play-hint .play-hint__mobile-only { display: inline-block; } }
 @media (prefers-reduced-transparency: reduce) { .game-start button, .level-toolbar, .level-picker__trigger, .level-picker__menu, .piece-tools { background: rgba(248,246,240,.97); -webkit-backdrop-filter: none; backdrop-filter: none; } .piece-tools button { background: #007aff; -webkit-backdrop-filter: none; backdrop-filter: none; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }

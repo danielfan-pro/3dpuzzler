@@ -7,8 +7,9 @@ import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { LEVELS, type FixedPiece, type LevelConfig, type PieceId } from "@/data/levels";
-import { loadGameProgress, saveGameProgress, type GameProgress, type StoredPiecePlacement } from "@/lib/gameStorage";
+import { INITIAL_HINT_BALANCE, loadGameProgress, saveGameProgress, type GameProgress, type StoredPiecePlacement } from "@/lib/gameStorage";
 import { getHapticsEnabled, setHapticsEnabled, triggerHaptic } from "@/lib/nativeHaptics";
+import { solvePuzzle } from "@/lib/puzzleSolver";
 
 type Point3 = readonly [number, number, number];
 type Cell = readonly [number, number];
@@ -17,6 +18,7 @@ type GameState = "MENU" | "ANIMATING" | "PLAYING";
 type GridMatrix = Array<Array<string | null>>;
 type LayoutMode = "LANDSCAPE_TABLET_DESKTOP" | "MOBILE_PORTRAIT";
 type PiecePreviewState = { id: PieceId; rotation: number; flipped: boolean };
+type HintFeedback = { message: string; piece: PiecePreviewState | null };
 type CaptureTarget = {
   setPointerCapture: (pointerId: number) => void;
   hasPointerCapture: (pointerId: number) => boolean;
@@ -288,6 +290,7 @@ function Polyomino({
   restoredPiece,
   layoutMode,
   resetToken,
+  hinted,
   levelTransitioning,
   unboxOrder,
   availablePieceCount,
@@ -309,6 +312,7 @@ function Polyomino({
   restoredPiece: StoredPiecePlacement | null;
   layoutMode: LayoutMode;
   resetToken: number;
+  hinted: boolean;
   levelTransitioning: boolean;
   unboxOrder: number;
   availablePieceCount: number;
@@ -612,6 +616,7 @@ function Polyomino({
       return;
     }
     preserveTrayTransform.current = false;
+    const wasPlaced = placed.current;
     placed.current = Boolean(targetTransform.anchor);
     anchor.current = targetTransform.anchor;
     rotation.current = targetTransform.rotation;
@@ -629,6 +634,16 @@ function Polyomino({
     const layoutChanged = previousLayoutMode.current !== layoutMode;
     previousLayoutMode.current = layoutMode;
     if (!levelTransitioning) {
+      if (hinted && targetTransform.anchor && !wasPlaced) {
+        group.rotation.set(0, targetTransform.rotation * (Math.PI / 2), 0);
+        body.scale.x = targetTransform.flipped ? -1 : 1;
+        const timeline = gsap.timeline({ onUpdate: invalidate, onComplete: applyExactTarget });
+        timeline.to(group.position, { y: LIFT_Y + 0.35, duration: 0.18, ease: "power2.out" });
+        timeline.to(group.position, { x: targetTransform.position.x, z: targetTransform.position.z, duration: 0.34, ease: "power2.inOut" });
+        timeline.to(group.scale, { x: 1, y: 1, z: 1, duration: 0.28, ease: "power2.inOut" }, "<");
+        timeline.to(group.position, { y: targetTransform.position.y, duration: 0.18, ease: "power2.out" });
+        return () => { timeline.kill(); };
+      }
       if (layoutChanged && !targetTransform.anchor) {
         group.rotation.set(0, targetTransform.rotation * (Math.PI / 2), 0);
         body.scale.x = targetTransform.flipped ? -1 : 1;
@@ -649,7 +664,7 @@ function Polyomino({
     timeline.to(group.scale, { x: targetTransform.anchor ? 1 : TRAY_SCALE, y: targetTransform.anchor ? 1 : TRAY_SCALE, z: targetTransform.anchor ? 1 : TRAY_SCALE, duration: 0.4, ease: "power2.inOut" }, 0.2);
     timeline.to(group.position, { y: targetTransform.position.y, duration: 0.2, ease: "power2.out" }, 0.55);
     return () => { timeline.kill(); };
-  }, [definition, fixedPiece, gameState, invalidate, layoutMode, levelTransitioning, resetToken, targetTransform]);
+  }, [definition, fixedPiece, gameState, hinted, invalidate, layoutMode, levelTransitioning, resetToken, targetTransform]);
 
   useFrame(() => {
     const group = groupRef.current;
@@ -976,6 +991,7 @@ function Scene({
   level,
   restoredPieces,
   resetToken,
+  hintedPieceId,
   won,
   levelTransitioning,
   onSelectPiece,
@@ -993,6 +1009,7 @@ function Scene({
   level: LevelConfig;
   restoredPieces: readonly StoredPiecePlacement[];
   resetToken: number;
+  hintedPieceId: PieceId | null;
   won: boolean;
   levelTransitioning: boolean;
   onSelectPiece: (id: string | null) => void;
@@ -1163,6 +1180,7 @@ function Scene({
           restoredPiece={restoredById.get(definition.id) ?? null}
           layoutMode={layoutMode}
           resetToken={resetToken}
+          hinted={hintedPieceId === definition.id}
           levelTransitioning={levelTransitioning}
           unboxOrder={availablePieces.findIndex((piece) => piece.id === definition.id)}
           availablePieceCount={availablePieces.length}
@@ -1198,14 +1216,20 @@ export function PuzzleScene() {
   });
   const [resetToken, setResetToken] = useState(0);
   const [won, setWon] = useState(false);
+  const [hintRewarded, setHintRewarded] = useState(false);
   const [levelTransitioning, setLevelTransitioning] = useState(false);
   const [levelMenuOpen, setLevelMenuOpen] = useState(false);
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
   const [dprCap, setDprCap] = useState(1.5);
   const [hapticsEnabled, setHapticsEnabledState] = useState(getHapticsEnabled);
+  const [hintFeedback, setHintFeedback] = useState<HintFeedback | null>(null);
+  const [hintThinking, setHintThinking] = useState(false);
+  const [hintedPieceId, setHintedPieceId] = useState<PieceId | null>(null);
+  const [hintRefillOpen, setHintRefillOpen] = useState(false);
   const [progress, setProgress] = useState<GameProgress>(loadGameProgress);
   const levelTransitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hintInFlight = useRef(false);
   const canvasElement = useRef<HTMLCanvasElement | null>(null);
   const currentLevelId = LEVELS[levelIndex].id;
   const selectedPieceLocked = selectedPiece
@@ -1236,6 +1260,7 @@ export function PuzzleScene() {
   }, []);
 
   const savePlacement = useCallback((placement: StoredPiecePlacement) => {
+    setHintFeedback(null);
     updateProgress((previous) => {
       const placements = previous.activeBoardState[String(currentLevelId)] ?? [];
       return {
@@ -1249,6 +1274,7 @@ export function PuzzleScene() {
   }, [currentLevelId, updateProgress]);
 
   const removePlacement = useCallback((pieceId: PieceId) => {
+    setHintFeedback(null);
     updateProgress((previous) => {
       const levelKey = String(currentLevelId);
       const placements = previous.activeBoardState[levelKey];
@@ -1277,6 +1303,12 @@ export function PuzzleScene() {
     if (levelTransitionTimer.current) clearTimeout(levelTransitionTimer.current);
   }, []);
 
+  useEffect(() => {
+    if (!hintFeedback) return;
+    const timer = setTimeout(() => setHintFeedback(null), 4200);
+    return () => clearTimeout(timer);
+  }, [hintFeedback]);
+
   const requestRotation = useCallback(() => {
     if (gameState === "PLAYING" && selectedPiece && !selectedPieceLocked && !levelTransitioning) setRotationRequest((request) => request + 1);
   }, [gameState, levelTransitioning, selectedPiece, selectedPieceLocked]);
@@ -1296,6 +1328,9 @@ export function PuzzleScene() {
     beginLevelTransition();
     selectPiece(null);
     setWon(false);
+    setHintRewarded(false);
+    setHintFeedback(null);
+    setHintedPieceId(null);
     updateProgress((previous) => ({
       ...previous,
       activeBoardState: { ...previous.activeBoardState, [String(currentLevelId)]: [] },
@@ -1303,12 +1338,103 @@ export function PuzzleScene() {
     setResetToken((token) => token + 1);
   }, [beginLevelTransition, currentLevelId, selectPiece, updateProgress]);
 
+  const requestHint = useCallback(async () => {
+    if (gameState !== "PLAYING" || won || levelTransitioning || hintInFlight.current) return;
+    if (progress.hintsRemaining <= 0) {
+      setHintRefillOpen(true);
+      return;
+    }
+    hintInFlight.current = true;
+    setHintThinking(true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const currentLevel = LEVELS[levelIndex];
+    const levelKey = String(currentLevel.id);
+    const currentPlacements = progress.activeBoardState[levelKey] ?? [];
+    const fixedPlacements: StoredPiecePlacement[] = currentLevel.fixedPieces.map((fixedPiece) => {
+      const definition = PIECES.find((piece) => piece.id === fixedPiece.pieceId)!;
+      const anchor = fixedAnchorFor(definition, fixedPiece);
+      return {
+        pieceId: fixedPiece.pieceId,
+        anchor: [anchor.column, anchor.row],
+        rotation: fixedPiece.rotation,
+        flipped: fixedPiece.flipped,
+      };
+    });
+    const solve = (placements: readonly StoredPiecePlacement[]) => solvePuzzle({
+      pieces: PIECES,
+      fixedPlacements,
+      playerPlacements: placements,
+      columns: COLUMNS,
+      rows: ROWS,
+    });
+
+    let compatiblePlacements = currentPlacements;
+    let solution = solve(compatiblePlacements);
+    const removed: PieceId[] = [];
+    while (!solution && compatiblePlacements.length > 0) {
+      const blocker = compatiblePlacements[compatiblePlacements.length - 1];
+      removed.push(blocker.pieceId);
+      compatiblePlacements = compatiblePlacements.slice(0, -1);
+      solution = solve(compatiblePlacements);
+    }
+    if (!solution || solution.length === 0) {
+      setHintFeedback({
+        message: solution ? "Every piece is already placed." : "No compatible completion was found.",
+        piece: null,
+      });
+      hintInFlight.current = false;
+      setHintThinking(false);
+      return;
+    }
+
+    const hint = solution[0];
+    setHintedPieceId(hint.pieceId);
+    selectPiece(hint.pieceId);
+    setPiecePreview({ id: hint.pieceId, rotation: hint.rotation, flipped: hint.flipped });
+    updateProgress((previous) => ({
+      ...previous,
+      hintsRemaining: Math.max(0, previous.hintsRemaining - 1),
+      totalHintsUsed: previous.totalHintsUsed + 1,
+      hintsUsedByLevel: {
+        ...previous.hintsUsedByLevel,
+        [levelKey]: (previous.hintsUsedByLevel[levelKey] ?? 0) + 1,
+      },
+      activeBoardState: {
+        ...previous.activeBoardState,
+        [levelKey]: [...compatiblePlacements, hint],
+      },
+    }));
+    setHintFeedback({
+      message: removed.length > 0 ? "Adjusted the board and placed a piece for you." : "A correct piece was placed.",
+      piece: { id: hint.pieceId, rotation: hint.rotation, flipped: hint.flipped },
+    });
+    void triggerHaptic("placement");
+    if (solution.length === 1) {
+      setTimeout(() => {
+        setHintRewarded(false);
+        setWon(true);
+        void triggerHaptic("completion");
+        updateProgress((previous) => ({
+          ...previous,
+          completedLevels: previous.completedLevels.includes(currentLevel.id)
+            ? previous.completedLevels
+            : [...previous.completedLevels, currentLevel.id],
+        }));
+      }, 720);
+    }
+    hintInFlight.current = false;
+    setHintThinking(false);
+  }, [gameState, levelIndex, levelTransitioning, progress.activeBoardState, progress.hintsRemaining, selectPiece, updateProgress, won]);
+
   const selectLevel = useCallback((nextIndex: number) => {
     setLevelMenuOpen(false);
+    setHintFeedback(null);
+    setHintedPieceId(null);
     beginLevelTransition();
     setLevelIndex(nextIndex);
     selectPiece(null);
     setWon(false);
+    setHintRewarded(false);
     updateProgress((previous) => ({ ...previous, currentLevel: LEVELS[nextIndex].id }));
     setResetToken((token) => token + 1);
     requestAnimationFrame(() => canvasElement.current?.focus({ preventScroll: true }));
@@ -1357,19 +1483,30 @@ export function PuzzleScene() {
           level={LEVELS[levelIndex]}
           restoredPieces={progress.activeBoardState[String(currentLevelId)] ?? EMPTY_STORED_PLACEMENTS}
           resetToken={resetToken}
+          hintedPieceId={hintedPieceId}
           won={won}
           levelTransitioning={levelTransitioning}
           onSelectPiece={selectPiece}
           onAnimationComplete={() => setGameState("PLAYING")}
           onWin={() => {
             void triggerHaptic("completion");
+            const earnedHint = !progress.completedLevels.includes(currentLevelId)
+              && (progress.hintsUsedByLevel[String(currentLevelId)] ?? 0) === 0;
+            setHintRewarded(earnedHint);
             setWon(true);
-            updateProgress((previous) => ({
-              ...previous,
-              completedLevels: previous.completedLevels.includes(currentLevelId)
-                ? previous.completedLevels
-                : [...previous.completedLevels, currentLevelId],
-            }));
+            updateProgress((previous) => {
+              const firstCompletion = !previous.completedLevels.includes(currentLevelId);
+              const noHintsUsed = (previous.hintsUsedByLevel[String(currentLevelId)] ?? 0) === 0;
+              return {
+                ...previous,
+                completedLevels: firstCompletion
+                  ? [...previous.completedLevels, currentLevelId]
+                  : previous.completedLevels,
+                hintsRemaining: firstCompletion && noHintsUsed
+                  ? previous.hintsRemaining + 1
+                  : previous.hintsRemaining,
+              };
+            });
           }}
           onPlacementChange={savePlacement}
           onPlacementRemove={removePlacement}
@@ -1450,7 +1587,18 @@ export function PuzzleScene() {
           )}
         </div>
         <button type="button" className="level-toolbar__reset" disabled={levelTransitioning} onClick={resetLevel}>Reset Level</button>
+        <button type="button" className={`level-toolbar__hint ${progress.hintsRemaining === 0 ? "level-toolbar__hint--empty" : ""}`} disabled={levelTransitioning || won || hintThinking} onClick={requestHint} aria-label={progress.hintsRemaining === 0 ? "Get more hints" : "Use a hint"}>
+          <span>{hintThinking ? "Thinking…" : progress.hintsRemaining === 0 ? "Get hints" : "Hint"}</span>
+          {!hintThinking && progress.hintsRemaining > 0 && <span className="level-toolbar__hint-count" aria-label={`${progress.hintsRemaining} hints remaining`}>{progress.hintsRemaining}</span>}
+        </button>
       </div>
+
+      {hintFeedback && !won && (
+        <div className="hint-toast" role="status">
+          {hintFeedback.piece && <span className="hint-toast__preview"><PiecePreview state={hintFeedback.piece} /></span>}
+          <span>{hintFeedback.message}</span>
+        </div>
+      )}
 
       <div className={`bottom-hud${gameState === "PLAYING" && !won ? " bottom-hud--visible" : ""}`} aria-hidden={gameState !== "PLAYING" || won}>
         <div className={`piece-tools${gameState === "PLAYING" ? " piece-tools--visible" : ""}`}>
@@ -1476,10 +1624,34 @@ export function PuzzleScene() {
             <span className="victory-card__spark">✦</span>
             <p className="victory-card__eyebrow">Board complete</p>
             <h2 id="victory-title">Puzzle solved!</h2>
+            {hintRewarded && (
+              <div className="victory-card__reward" role="status">
+                <span aria-hidden="true">✦</span>
+                <span><strong>+1 Hint</strong> awarded for solving without help</span>
+              </div>
+            )}
             <button type="button" onClick={() => {
               if (levelIndex < LEVELS.length - 1) selectLevel(levelIndex + 1);
               else resetLevel();
             }}>{levelIndex < LEVELS.length - 1 ? "Next Level" : "Play Again"}</button>
+          </div>
+        </div>
+      )}
+
+      {hintRefillOpen && !won && (
+        <div className="hint-refill-overlay" role="dialog" aria-modal="true" aria-labelledby="hint-refill-title">
+          <div className="hint-refill-card">
+            <span className="hint-refill-card__icon" aria-hidden="true">✦</span>
+            <p className="hint-refill-card__eyebrow">Hints remaining: 0</p>
+            <h2 id="hint-refill-title">Need another nudge?</h2>
+            <p>Purchasing will come later. For now, refill your testing balance.</p>
+            <div className="hint-refill-card__actions">
+              <button type="button" className="hint-refill-card__cancel" onClick={() => setHintRefillOpen(false)}>Not Now</button>
+              <button type="button" className="hint-refill-card__refill" onClick={() => {
+                updateProgress((previous) => ({ ...previous, hintsRemaining: previous.hintsRemaining + INITIAL_HINT_BALANCE }));
+                setHintRefillOpen(false);
+              }}>Refill 5 Hints</button>
+            </div>
           </div>
         </div>
       )}
