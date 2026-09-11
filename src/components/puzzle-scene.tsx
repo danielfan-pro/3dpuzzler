@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { LEVELS, type FixedPiece, type LevelConfig, type PieceId } from "@/data/levels";
 import { loadGameProgress, saveGameProgress, type GameProgress, type StoredPiecePlacement } from "@/lib/gameStorage";
-import { completionHaptic, invalidPlacementHaptic, placementHaptic, selectionHaptic } from "@/lib/nativeHaptics";
+import { getHapticsEnabled, setHapticsEnabled, triggerHaptic } from "@/lib/nativeHaptics";
 
 type Point3 = readonly [number, number, number];
 type Cell = readonly [number, number];
@@ -693,7 +693,7 @@ function Polyomino({
     event.nativeEvent.preventDefault();
     cursorCellIndex.current = Number(event.object.userData.cellIndex ?? cursorCellIndex.current);
     onSelect(definition.id);
-    void selectionHaptic();
+    void triggerHaptic("selection");
     onTransformChange({ id: definition.id, rotation: rotation.current, flipped: flipped.current });
     if (levelTransitioning) return;
     const pointerTarget = event.nativeEvent.target as Element;
@@ -785,7 +785,7 @@ function Polyomino({
     if (snapAnchor.current) {
       const targetCells = currentCells(snapAnchor.current);
       if (placePiece(definition.id, targetCells)) {
-        void placementHaptic();
+        void triggerHaptic("placement");
         placed.current = true;
         anchor.current = snapAnchor.current;
         const boardTarget = anchorToWorld(snapAnchor.current);
@@ -800,7 +800,7 @@ function Polyomino({
     }
 
     if (!placed.current) {
-      void invalidPlacementHaptic();
+      void triggerHaptic("invalid");
       resetToTray(false);
     }
     snapAnchor.current = null;
@@ -1184,6 +1184,7 @@ function Scene({
 }
 
 export function PuzzleScene() {
+  const isNativeApp = Capacitor.isNativePlatform();
   const [gameState, setGameState] = useState<GameState>("MENU");
   const [startedAt, setStartedAt] = useState(0);
   const [selectedPiece, setSelectedPiece] = useState<string | null>(null);
@@ -1202,6 +1203,7 @@ export function PuzzleScene() {
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
   const [dprCap, setDprCap] = useState(1.5);
+  const [hapticsEnabled, setHapticsEnabledState] = useState(getHapticsEnabled);
   const [progress, setProgress] = useState<GameProgress>(loadGameProgress);
   const levelTransitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canvasElement = useRef<HTMLCanvasElement | null>(null);
@@ -1283,6 +1285,13 @@ export function PuzzleScene() {
     if (gameState === "PLAYING" && selectedPiece && !selectedPieceLocked && !levelTransitioning) setFlipRequest((request) => request + 1);
   }, [gameState, levelTransitioning, selectedPiece, selectedPieceLocked]);
 
+  const toggleHaptics = useCallback(() => {
+    const enabled = !hapticsEnabled;
+    setHapticsEnabled(enabled);
+    setHapticsEnabledState(enabled);
+    if (enabled) void triggerHaptic("selection");
+  }, [hapticsEnabled]);
+
   const resetLevel = useCallback(() => {
     beginLevelTransition();
     selectPiece(null);
@@ -1353,7 +1362,7 @@ export function PuzzleScene() {
           onSelectPiece={selectPiece}
           onAnimationComplete={() => setGameState("PLAYING")}
           onWin={() => {
-            void completionHaptic();
+            void triggerHaptic("completion");
             setWon(true);
             updateProgress((previous) => ({
               ...previous,
@@ -1384,6 +1393,27 @@ export function PuzzleScene() {
           if (!event.currentTarget.contains(event.relatedTarget)) setLevelMenuOpen(false);
         }}
       >
+        {isNativeApp && (
+          <button
+            type="button"
+            className={`haptic-toggle-btn${hapticsEnabled ? "" : " is-muted"}`}
+            onClick={toggleHaptics}
+            aria-label="Toggle Haptics"
+            aria-pressed={hapticsEnabled}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="7" y="2" width="10" height="20" rx="2" />
+              {hapticsEnabled ? (
+                <>
+                  <path d="M2 8v8" />
+                  <path d="M22 8v8" />
+                </>
+              ) : (
+                <line x1="2" y1="2" x2="22" y2="22" />
+              )}
+            </svg>
+          </button>
+        )}
         <span className="level-toolbar__label">Challenge</span>
         <div className="level-picker">
           <button
@@ -1429,13 +1459,14 @@ export function PuzzleScene() {
           <button type="button" disabled={!selectedPiece || selectedPieceLocked || levelTransitioning} onClick={requestFlip} aria-label={`Flip piece ${selectedPiece ?? ""} horizontally`}>↔ Flip</button>
         </div>
         <p aria-hidden={gameState !== "PLAYING"} className={`play-hint${gameState === "PLAYING" ? " play-hint--visible" : ""}`}>
-          <span className="play-hint__key">Drag</span><span>move</span>
+          <span className="play-hint__key">Drag</span><span>Move</span>
+          <span className="play-hint__separator play-hint__desktop-only">·</span>
+          <span className="play-hint__key play-hint__desktop-only">R / Space</span><span className="play-hint__desktop-only">Rotate</span>
+          <span className="play-hint__separator play-hint__desktop-only">·</span>
+          <span className="play-hint__key play-hint__desktop-only">F</span><span className="play-hint__desktop-only">Flip</span>
           <span className="play-hint__separator">·</span>
-          <span className="play-hint__key">R / Space</span><span>rotate</span>
-          <span className="play-hint__separator">·</span>
-          <span className="play-hint__key">F</span><span>flip</span>
-          <span className="play-hint__separator">·</span>
-          <span className="play-hint__key">Double-click / Double-tap</span><span>reset</span>
+          <span className="play-hint__key play-hint__desktop-only">Double-click / Double-tap</span>
+          <span className="play-hint__key play-hint__mobile-only">Double-tap</span><span>Reset</span>
         </p>
       </div>
 
