@@ -148,6 +148,27 @@ function centeredStoragePosition(definition: PieceDefinition, slot: Point3): Poi
   ];
 }
 
+function storagePositionForTransform(
+  definition: PieceDefinition,
+  defaultPosition: THREE.Vector3,
+  rotation: number,
+  flipped: boolean,
+) {
+  const defaultCells = transformedCells(definition.cells, definition.trayRotation);
+  const currentCells = transformedCells(definition.cells, rotation, flipped);
+  const boundsCenter = (cells: Cell[]) => ({
+    x: (Math.min(...cells.map(([x]) => x)) + Math.max(...cells.map(([x]) => x))) / 2,
+    z: (Math.min(...cells.map(([, z]) => z)) + Math.max(...cells.map(([, z]) => z))) / 2,
+  });
+  const defaultCenter = boundsCenter(defaultCells);
+  const currentCenter = boundsCenter(currentCells);
+  return new THREE.Vector3(
+    defaultPosition.x + (defaultCenter.x - currentCenter.x) * GRID_CELL_SIZE_X * TRAY_SCALE,
+    defaultPosition.y,
+    defaultPosition.z + (defaultCenter.z - currentCenter.z) * GRID_CELL_SIZE_Z * TRAY_SCALE,
+  );
+}
+
 function cellsForPlacement(anchor: GridCell, cells: readonly Cell[], rotation: number, flipped = false): GridCell[] {
   return transformedCells(cells, rotation, flipped).map(([x, z]) => {
     return { column: anchor.column + x, row: anchor.row + z };
@@ -387,16 +408,21 @@ function Polyomino({
       if (group) group.rotation.set(0, definition.trayRotation * (Math.PI / 2), 0);
       if (bodyRef.current) bodyRef.current.scale.x = 1;
     }
+    const trayTarget = storagePositionForTransform(definition, tray, rotation.current, flipped.current);
     if (selected) onTransformChange({ id: definition.id, rotation: rotation.current, flipped: flipped.current });
     if (group) {
       gsap.killTweensOf([group.position, group.scale]);
-      gsap.to(group.position, { x: tray.x, y: tray.y, z: tray.z, duration: 0.32, ease: "power2.inOut", onUpdate: invalidate });
+      // Board pieces receive their auto-packed slot only after their placement
+      // is removed. The target-sync effect below animates to that new slot.
+      if (!wasPlaced && !restoredPiece) {
+        gsap.to(group.position, { x: trayTarget.x, y: trayTarget.y, z: trayTarget.z, duration: 0.32, ease: "power2.inOut", onUpdate: invalidate });
+      }
       gsap.to(group.scale, { x: TRAY_SCALE, y: TRAY_SCALE, z: TRAY_SCALE, duration: 0.25, ease: "power2.out", onUpdate: invalidate });
     }
     motionTarget.current = null;
     onPlacementRemove(definition.id);
     invalidate();
-  }, [definition.id, definition.trayRotation, invalidate, onPlacementRemove, onTransformChange, restoredPiece, selected, tray]);
+  }, [definition, invalidate, onPlacementRemove, onTransformChange, restoredPiece, selected, tray]);
 
   useEffect(() => {
     if (!selected || fixedPiece || gameState !== "PLAYING" || levelTransitioning) {
@@ -564,17 +590,26 @@ function Polyomino({
     if (!group || !body) return;
     gsap.killTweensOf([group.position, group.rotation, group.scale, body.scale]);
     const keepCurrentTrayTransform = preserveTrayTransform.current && !targetTransform.anchor && !levelTransitioning;
-    preserveTrayTransform.current = false;
     dragging.current = false;
     snapAnchor.current = null;
     motionTarget.current = null;
     if (keepCurrentTrayTransform) {
       placed.current = false;
       anchor.current = null;
-      gsap.to(group.position, { x: targetTransform.position.x, y: targetTransform.position.y, z: targetTransform.position.z, duration: 0.32, ease: "power2.inOut", onUpdate: invalidate });
+      const returnTarget = storagePositionForTransform(definition, targetTransform.position, rotation.current, flipped.current);
+      gsap.to(group.position, {
+        x: returnTarget.x,
+        y: returnTarget.y,
+        z: returnTarget.z,
+        duration: 0.32,
+        ease: "power2.inOut",
+        onUpdate: invalidate,
+        onComplete: () => { preserveTrayTransform.current = false; },
+      });
       gsap.to(group.scale, { x: TRAY_SCALE, y: TRAY_SCALE, z: TRAY_SCALE, duration: 0.25, ease: "power2.out", onUpdate: invalidate });
       return;
     }
+    preserveTrayTransform.current = false;
     placed.current = Boolean(targetTransform.anchor);
     anchor.current = targetTransform.anchor;
     rotation.current = targetTransform.rotation;
@@ -612,7 +647,7 @@ function Polyomino({
     timeline.to(group.scale, { x: targetTransform.anchor ? 1 : TRAY_SCALE, y: targetTransform.anchor ? 1 : TRAY_SCALE, z: targetTransform.anchor ? 1 : TRAY_SCALE, duration: 0.4, ease: "power2.inOut" }, 0.2);
     timeline.to(group.position, { y: targetTransform.position.y, duration: 0.2, ease: "power2.out" }, 0.55);
     return () => { timeline.kill(); };
-  }, [fixedPiece, gameState, invalidate, layoutMode, levelTransitioning, resetToken, targetTransform]);
+  }, [definition, fixedPiece, gameState, invalidate, layoutMode, levelTransitioning, resetToken, targetTransform]);
 
   useFrame(() => {
     const group = groupRef.current;
@@ -732,7 +767,7 @@ function Polyomino({
     if (intentionalReset) {
       dragging.current = false;
       clearPiece(definition.id);
-      resetToTray(true);
+      resetToTray(false);
       return;
     }
 
@@ -1390,7 +1425,7 @@ export function PuzzleScene() {
           <span className="play-hint__separator">·</span>
           <span className="play-hint__key">F</span><span>flip</span>
           <span className="play-hint__separator">·</span>
-          <span className="play-hint__key">Double-click / double-tap</span><span>reset</span>
+          <span className="play-hint__key">Double-click / Double-tap</span><span>reset</span>
         </p>
       </div>
 
