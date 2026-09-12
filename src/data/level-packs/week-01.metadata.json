@@ -1,0 +1,18 @@
+[
+  {"levelId":17,"pack":"week-01","presetCount":6,"presetFingerprint":"2eb1fbdf64a9caaa5716","solutionFingerprint":"5273228cc3d7ca16fc9c","solverNodes":7,"seed":1025517057,"generatorVersion":1},
+  {"levelId":18,"pack":"week-01","presetCount":6,"presetFingerprint":"1f2ce59251a624b82173","solutionFingerprint":"6a58348382e186029a42","solverNodes":7,"seed":1025517057,"generatorVersion":1},
+  {"levelId":19,"pack":"week-01","presetCount":6,"presetFingerprint":"5272def72d2f01ccccc9","solutionFingerprint":"1777d78f37c273bc4385","solverNodes":26,"seed":1025517057,"generatorVersion":1},
+  {"levelId":20,"pack":"week-01","presetCount":5,"presetFingerprint":"1b63085918e087df3f42","solutionFingerprint":"107030fe25af61e121d7","solverNodes":75,"seed":1025517057,"generatorVersion":1},
+  {"levelId":21,"pack":"week-01","presetCount":5,"presetFingerprint":"8b50502c973952051239","solutionFingerprint":"c5db141b0313c74de4d8","solverNodes":19,"seed":1025517057,"generatorVersion":1},
+  {"levelId":22,"pack":"week-01","presetCount":5,"presetFingerprint":"55fa0a93eef6bb01b2ef","solutionFingerprint":"b0fa8b4e28ff2b731bf8","solverNodes":28,"seed":1025517057,"generatorVersion":1},
+  {"levelId":23,"pack":"week-01","presetCount":4,"presetFingerprint":"e726ca2edb97a34477f1","solutionFingerprint":"f00e6ee4410192bf5323","solverNodes":36,"seed":1025517057,"generatorVersion":1},
+  {"levelId":24,"pack":"week-01","presetCount":4,"presetFingerprint":"df1e5c55c449b8743184","solutionFingerprint":"ff4a912e8b4c8f303e3b","solverNodes":100,"seed":1025517057,"generatorVersion":1},
+  {"levelId":25,"pack":"week-01","presetCount":4,"presetFingerprint":"d0b2900dd5d62c59a609","solutionFingerprint":"8b436224fefc4367aef3","solverNodes":13,"seed":1025517057,"generatorVersion":1},
+  {"levelId":26,"pack":"week-01","presetCount":3,"presetFingerprint":"14b683525c8979f2b7cc","solutionFingerprint":"b45a243ce86825330f24","solverNodes":665,"seed":1025517057,"generatorVersion":1},
+  {"levelId":27,"pack":"week-01","presetCount":3,"presetFingerprint":"54eb0bc4591fe712bc6d","solutionFingerprint":"9b34c97d68f0508359e4","solverNodes":311,"seed":1025517057,"generatorVersion":1},
+  {"levelId":28,"pack":"week-01","presetCount":3,"presetFingerprint":"11ea4b19a676ff990e7e","solutionFingerprint":"5fc49f0e967c5128da10","solverNodes":72,"seed":1025517057,"generatorVersion":1},
+  {"levelId":29,"pack":"week-01","presetCount":2,"presetFingerprint":"e17e21a50f9d9169915a","solutionFingerprint":"104c485acb2983c6e12f","solverNodes":62,"seed":1025517057,"generatorVersion":1},
+  {"levelId":30,"pack":"week-01","presetCount":2,"presetFingerprint":"c6b54bcc6f5b93e497b7","solutionFingerprint":"07d3608355ffcc5416d6","solverNodes":45,"seed":1025517059,"generatorVersion":1},
+  {"levelId":31,"pack":"week-01","presetCount":1,"presetFingerprint":"d1c438e242b57e505b59","solutionFingerprint":"564a1937326e3c7fab3b","solverNodes":47,"seed":1025517057,"generatorVersion":1},
+  {"levelId":32,"pack":"week-01","presetCount":1,"presetFingerprint":"4591d497517efe52ea6c","solutionFingerprint":"5544533703bc34a13982","solverNodes":78,"seed":1025517059,"generatorVersion":1}
+]

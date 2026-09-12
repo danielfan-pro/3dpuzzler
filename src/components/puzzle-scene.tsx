@@ -6,7 +6,7 @@ import { Capacitor } from "@capacitor/core";
 import gsap from "gsap";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { LEVELS, type FixedPiece, type LevelConfig, type PieceId } from "@/data/levels";
+import { FREE_PLAY_LEVEL, LEVEL_PACKS, LEVELS, type FixedPiece, type LevelConfig, type PieceId } from "@/data/levels";
 import { INITIAL_HINT_BALANCE, loadGameProgress, saveGameProgress, type GameProgress, type StoredPiecePlacement } from "@/lib/gameStorage";
 import { getHapticsEnabled, setHapticsEnabled, triggerHaptic } from "@/lib/nativeHaptics";
 import { solvePuzzle } from "@/lib/puzzleSolver";
@@ -1272,6 +1272,8 @@ export function PuzzleScene() {
   const [hintRewarded, setHintRewarded] = useState(false);
   const [levelTransitioning, setLevelTransitioning] = useState(false);
   const [levelMenuOpen, setLevelMenuOpen] = useState(false);
+  const [levelPackId, setLevelPackId] = useState<string>(LEVEL_PACKS[0].id);
+  const [packLibraryOpen, setPackLibraryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
@@ -1286,6 +1288,9 @@ export function PuzzleScene() {
   const hintInFlight = useRef(false);
   const canvasElement = useRef<HTMLCanvasElement | null>(null);
   const currentLevelId = LEVELS[levelIndex].id;
+  const currentPack = LEVEL_PACKS.find((pack) => pack.levels.some((level) => level.id === currentLevelId));
+  const displayedPack = LEVEL_PACKS.find((pack) => pack.id === levelPackId) ?? LEVEL_PACKS[0];
+  const displayedPackIndex = LEVEL_PACKS.findIndex((pack) => pack.id === displayedPack.id);
   const selectedPieceLocked = selectedPiece
     ? LEVELS[levelIndex].fixedPieces.some((piece) => piece.pieceId === selectedPiece)
     : false;
@@ -1309,10 +1314,16 @@ export function PuzzleScene() {
     if (!levelMenuOpen) return;
     const closeOnOutsidePress = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Element) || !target.closest(".level-toolbar")) setLevelMenuOpen(false);
+      if (!(target instanceof Element) || !target.closest(".level-toolbar")) {
+        setLevelMenuOpen(false);
+        setPackLibraryOpen(false);
+      }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setLevelMenuOpen(false);
+      if (event.key === "Escape") {
+        if (packLibraryOpen) setPackLibraryOpen(false);
+        else setLevelMenuOpen(false);
+      }
     };
     document.addEventListener("pointerdown", closeOnOutsidePress);
     document.addEventListener("keydown", closeOnEscape);
@@ -1320,7 +1331,7 @@ export function PuzzleScene() {
       document.removeEventListener("pointerdown", closeOnOutsidePress);
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, [levelMenuOpen]);
+  }, [levelMenuOpen, packLibraryOpen]);
 
   const updateProgress = useCallback((updater: (previous: GameProgress) => GameProgress) => {
     setProgress((previous) => {
@@ -1509,6 +1520,7 @@ export function PuzzleScene() {
 
   const selectLevel = useCallback((nextIndex: number) => {
     setLevelMenuOpen(false);
+    setPackLibraryOpen(false);
     setHintFeedback(null);
     setHintedPieceId(null);
     beginLevelTransition();
@@ -1616,9 +1628,15 @@ export function PuzzleScene() {
             type="button"
             className="level-picker__trigger"
             disabled={levelTransitioning}
-            aria-haspopup="listbox"
+            aria-haspopup="dialog"
             aria-expanded={levelMenuOpen}
-            onClick={() => setLevelMenuOpen((open) => !open)}
+            onClick={() => {
+              if (!levelMenuOpen) {
+                if (currentPack) setLevelPackId(currentPack.id);
+                setPackLibraryOpen(false);
+              }
+              setLevelMenuOpen((open) => !open);
+            }}
           >
             <span>{progress.completedLevels.includes(currentLevelId) ? "✓ " : ""}{LEVELS[levelIndex].name}</span>
             <span className="level-picker__chevron" aria-hidden="true">
@@ -1628,20 +1646,51 @@ export function PuzzleScene() {
             </span>
           </button>
           {levelMenuOpen && (
-            <div className="level-picker__menu" role="listbox" aria-label="Challenge level">
-              {LEVELS.map((level, index) => (
-                <button
-                  key={level.id}
-                  type="button"
-                  role="option"
-                  aria-selected={index === levelIndex}
-                  className="level-picker__option"
-                  onClick={() => selectLevel(index)}
-                >
-                  <span aria-hidden="true" className="level-picker__check">{progress.completedLevels.includes(level.id) ? "✓" : ""}</span>
-                  <span>{level.name}</span>
+            <div className="level-picker__menu" role="dialog" aria-label="Choose a level">
+              <div className="level-picker__navigator">
+                <button type="button" className="level-picker__arrow" disabled={displayedPackIndex === 0} onClick={() => { setLevelPackId(LEVEL_PACKS[displayedPackIndex - 1].id); setPackLibraryOpen(false); }} aria-label="Previous pack">‹</button>
+                <button type="button" className="level-picker__pack-title" aria-expanded={packLibraryOpen} onClick={() => setPackLibraryOpen((open) => !open)}>
+                  <span>{displayedPack.name}</span>
+                  <small>{displayedPack.levels.filter((level) => progress.completedLevels.includes(level.id)).length}/{displayedPack.levels.length}</small>
+                  <span className={`level-picker__library-chevron${packLibraryOpen ? " is-open" : ""}`} aria-hidden="true">⌄</span>
                 </button>
-              ))}
+                <button type="button" className="level-picker__arrow" disabled={displayedPackIndex === LEVEL_PACKS.length - 1} onClick={() => { setLevelPackId(LEVEL_PACKS[displayedPackIndex + 1].id); setPackLibraryOpen(false); }} aria-label="Next pack">›</button>
+              </div>
+              {packLibraryOpen ? (
+                <div className="level-picker__library" aria-label="All level packs">
+                  {LEVEL_PACKS.map((pack) => {
+                    const completed = pack.levels.filter((level) => progress.completedLevels.includes(level.id)).length;
+                    return (
+                      <button key={pack.id} type="button" className={`level-picker__library-pack${pack.id === displayedPack.id ? " is-current" : ""}`} onClick={() => { setLevelPackId(pack.id); setPackLibraryOpen(false); }}>
+                        <span>{pack.name}</span>
+                        <small>{completed}/{pack.levels.length} complete</small>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <>
+                  <div className="level-picker__pack-heading">
+                    <span>{displayedPack.name}</span>
+                    <small>Levels {displayedPack.levels[0].id}–{displayedPack.levels.at(-1)?.id}</small>
+                  </div>
+                  <div className="level-picker__grid">
+                    {displayedPack.levels.map((level) => {
+                      const index = LEVELS.findIndex((item) => item.id === level.id);
+                      const completed = progress.completedLevels.includes(level.id);
+                      return (
+                        <button key={level.id} type="button" aria-current={index === levelIndex ? "true" : undefined} className={`level-picker__level${completed ? " is-complete" : ""}`} onClick={() => selectLevel(index)} aria-label={`${level.name}${completed ? ", completed" : ""}`}>
+                          <span>{level.id}</span>
+                          {completed && <span className="level-picker__level-check" aria-hidden="true">✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+              <button type="button" className={`level-picker__free-play${currentLevelId === FREE_PLAY_LEVEL.id ? " is-current" : ""}`} onClick={() => selectLevel(LEVELS.findIndex((level) => level.id === FREE_PLAY_LEVEL.id))}>
+                <span>Free Play</span><small>Empty board</small>
+              </button>
             </div>
           )}
         </div>
